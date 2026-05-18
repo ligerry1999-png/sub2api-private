@@ -50,6 +50,8 @@ type DataAccount struct {
 	Type               string         `json:"type"`
 	Credentials        map[string]any `json:"credentials"`
 	Extra              map[string]any `json:"extra,omitempty"`
+	AccountName        string         `json:"account_name,omitempty"`
+	AccountStructure   string         `json:"account_structure,omitempty"`
 	ProxyKey           *string        `json:"proxy_key,omitempty"`
 	Concurrency        int            `json:"concurrency"`
 	Priority           int            `json:"priority"`
@@ -154,6 +156,8 @@ func (h *AccountHandler) ExportData(c *gin.Context) {
 			Type:               acc.Type,
 			Credentials:        acc.Credentials,
 			Extra:              acc.Extra,
+			AccountName:        credentialString(acc.Credentials, "account_name"),
+			AccountStructure:   credentialString(acc.Credentials, "account_structure"),
 			ProxyKey:           proxyKey,
 			Concurrency:        acc.Concurrency,
 			Priority:           acc.Priority,
@@ -300,6 +304,8 @@ func (h *AccountHandler) importData(ctx context.Context, req DataImportRequest) 
 		}
 
 		enrichCredentialsFromIDToken(&item)
+		setCredentialIfMissing(item.Credentials, "account_name", item.AccountName)
+		setCredentialIfMissing(item.Credentials, "account_structure", item.AccountStructure)
 
 		accountInput := &service.CreateAccountInput{
 			Name:                 item.Name,
@@ -632,6 +638,40 @@ func enrichCredentialsFromIDToken(item *DataAccount) {
 	setIfMissing("chatgpt_account_id", userInfo.ChatGPTAccountID)
 	setIfMissing("chatgpt_user_id", userInfo.ChatGPTUserID)
 	setIfMissing("organization_id", userInfo.OrganizationID)
+	if userInfo.OrganizationTitle != "" {
+		setIfMissing("organization_title", userInfo.OrganizationTitle)
+	}
+}
+
+func setCredentialIfMissing(credentials map[string]any, key, value string) {
+	if credentials == nil {
+		return
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return
+	}
+	if existing, _ := credentials[key].(string); strings.TrimSpace(existing) == "" {
+		credentials[key] = value
+	}
+}
+
+func credentialString(credentials map[string]any, key string) string {
+	if credentials == nil {
+		return ""
+	}
+	value, ok := credentials[key]
+	if !ok {
+		return ""
+	}
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case fmt.Stringer:
+		return strings.TrimSpace(v.String())
+	default:
+		return strings.TrimSpace(fmt.Sprint(v))
+	}
 }
 
 func normalizeProxyStatus(status string) string {

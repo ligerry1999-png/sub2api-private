@@ -380,6 +380,7 @@ type UserInfo struct {
 	PlanType         string
 	UserID           string
 	OrganizationID   string
+	OrganizationTitle string
 	Organizations    []OrganizationClaim
 }
 
@@ -400,12 +401,14 @@ func (c *IDTokenClaims) GetUserInfo() *UserInfo {
 		for _, org := range c.OpenAIAuth.Organizations {
 			if org.IsDefault {
 				info.OrganizationID = org.ID
+				info.OrganizationTitle = org.Title
 				break
 			}
 		}
 		// If no default, use first org
 		if info.OrganizationID == "" && len(c.OpenAIAuth.Organizations) > 0 {
 			info.OrganizationID = c.OpenAIAuth.Organizations[0].ID
+			info.OrganizationTitle = c.OpenAIAuth.Organizations[0].Title
 		}
 	}
 

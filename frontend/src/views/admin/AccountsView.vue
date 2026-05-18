@@ -229,7 +229,17 @@
           <template #cell-platform_type="{ row }">
             <div class="flex min-w-0 flex-col gap-1">
               <div class="flex flex-wrap items-center gap-1">
-                <PlatformTypeBadge :platform="row.platform" :type="row.type" :plan-type="row.credentials?.plan_type" :privacy-mode="row.extra?.privacy_mode" :subscription-expires-at="row.credentials?.subscription_expires_at" />
+                <PlatformTypeBadge
+                  :platform="row.platform"
+                  :type="row.type"
+                  :plan-type="asString(row.credentials?.plan_type)"
+                  :privacy-mode="asString(row.extra?.privacy_mode)"
+                  :subscription-expires-at="asString(row.credentials?.subscription_expires_at)"
+                  :account-name="openAIAccountSpaceName(row)"
+                  :account-structure="openAIAccountStructure(row)"
+                  :chatgpt-account-id="asString(row.credentials?.chatgpt_account_id)"
+                  :organization-id="asString(row.credentials?.organization_id)"
+                />
                 <span
                   v-if="getAntigravityTierLabel(row)"
                   :class="['inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', getAntigravityTierClass(row)]"
@@ -607,6 +617,38 @@ const autoRefreshIntervalLabel = (sec: number) => {
   if (sec === 15) return t('admin.accounts.refreshInterval15s')
   if (sec === 30) return t('admin.accounts.refreshInterval30s')
   return `${sec}s`
+}
+
+const asString = (value: unknown): string | undefined => {
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    return trimmed || undefined
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value)
+  }
+  return undefined
+}
+
+const openAIAccountSpaceName = (row: Account): string | undefined => {
+  if (row.platform !== 'openai') return undefined
+  const credentials = row.credentials ?? {}
+  const extra = row.extra ?? {}
+  return (
+    asString(credentials.account_name) ||
+    asString(credentials.workspace_name) ||
+    asString(credentials.organization_title) ||
+    asString(extra.account_name) ||
+    asString(extra.workspace_name) ||
+    asString(extra.organization_title)
+  )
+}
+
+const openAIAccountStructure = (row: Account): string | undefined => {
+  if (row.platform !== 'openai') return undefined
+  const credentials = row.credentials ?? {}
+  const extra = row.extra ?? {}
+  return asString(credentials.account_structure) || asString(extra.account_structure)
 }
 
 const loadSavedColumns = () => {
