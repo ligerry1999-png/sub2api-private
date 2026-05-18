@@ -52,13 +52,13 @@
               @click="openPreview(log, log.images[0])"
             >
               <img
-                v-if="thumbnailSrc(log, log.images[0])"
+                v-if="thumbnailReady(log, log.images[0])"
                 :src="thumbnailSrc(log, log.images[0])"
-                :alt="log.prompt"
+                alt=""
                 class="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
               />
-              <div v-else class="flex h-full w-full items-center justify-center text-sm text-gray-400">
-                无缩略图
+              <div v-else class="flex h-full w-full items-center justify-center px-3 text-center text-sm text-gray-400">
+                {{ thumbnailPlaceholder(log, log.images[0]) }}
               </div>
               <span
                 v-if="log.image_count > 1"
@@ -171,11 +171,14 @@
             @click="openPreview(selectedLog, img)"
           >
             <img
-              v-if="thumbnailSrc(selectedLog, img)"
+              v-if="thumbnailReady(selectedLog, img)"
               :src="thumbnailSrc(selectedLog, img)"
               class="h-full w-full object-cover"
               alt=""
             />
+            <div v-else class="flex h-full w-full items-center justify-center px-2 text-center text-xs text-gray-400">
+              {{ thumbnailPlaceholder(selectedLog, img) }}
+            </div>
           </button>
         </div>
       </div>
@@ -209,6 +212,7 @@ const previewDataURL = ref('')
 const selectedLog = ref<ImageLog | null>(null)
 const selectedImage = ref<ImageLogImage | null>(null)
 const thumbnailURLs = ref<Record<string, string>>({})
+const thumbnailStates = ref<Record<string, 'loading' | 'ready' | 'error'>>({})
 let abortController: AbortController | null = null
 let thumbnailLoadSeq = 0
 
@@ -281,6 +285,20 @@ const thumbnailSrc = (log: ImageLog | null, image?: ImageLogImage) => {
   return thumbnailURLs.value[key] || image.thumbnail_data_url || ''
 }
 
+const thumbnailReady = (log: ImageLog | null, image?: ImageLogImage) => {
+  if (!log || !image) return false
+  const key = imageKey(log, image)
+  return thumbnailStates.value[key] === 'ready' && Boolean(thumbnailSrc(log, image))
+}
+
+const thumbnailPlaceholder = (log: ImageLog | null, image?: ImageLogImage) => {
+  if (!log || !image) return '无缩略图'
+  const state = thumbnailStates.value[imageKey(log, image)]
+  if (state === 'loading') return '加载中'
+  if (state === 'error') return '图片加载失败'
+  return '无缩略图'
+}
+
 const revokeThumbnailURLs = (keepKeys = new Set<string>()) => {
   const next: Record<string, string> = {}
   for (const [key, url] of Object.entries(thumbnailURLs.value)) {
@@ -291,6 +309,13 @@ const revokeThumbnailURLs = (keepKeys = new Set<string>()) => {
     URL.revokeObjectURL(url)
   }
   thumbnailURLs.value = next
+  const nextStates: Record<string, 'loading' | 'ready' | 'error'> = {}
+  for (const [key, state] of Object.entries(thumbnailStates.value)) {
+    if (keepKeys.has(key)) {
+      nextStates[key] = state
+    }
+  }
+  thumbnailStates.value = nextStates
 }
 
 const loadThumbnails = async (items: ImageLog[]) => {
@@ -308,14 +333,29 @@ const loadThumbnails = async (items: ImageLog[]) => {
     }
   }
   revokeThumbnailURLs(nextKeys)
+  if (targets.length > 0) {
+    thumbnailStates.value = {
+      ...thumbnailStates.value,
+      ...Object.fromEntries(targets.map(({ key }) => [key, 'loading' as const]))
+    }
+  }
   await Promise.allSettled(
     targets.map(async ({ log, image, key }) => {
-      const url = await adminAPI.imageLogs.getThumbnailObjectURL(log.id, image.index)
-      if (seq !== thumbnailLoadSeq || !nextKeys.has(key)) {
-        URL.revokeObjectURL(url)
+      try {
+        const url = await adminAPI.imageLogs.getThumbnailObjectURL(log.id, image.index)
+        if (seq !== thumbnailLoadSeq || !nextKeys.has(key)) {
+          URL.revokeObjectURL(url)
+          return
+        }
+        thumbnailURLs.value = { ...thumbnailURLs.value, [key]: url }
+        thumbnailStates.value = { ...thumbnailStates.value, [key]: 'ready' }
+      } catch {
+        if (seq !== thumbnailLoadSeq || !nextKeys.has(key)) {
+          return
+        }
+        thumbnailStates.value = { ...thumbnailStates.value, [key]: 'error' }
         return
       }
-      thumbnailURLs.value = { ...thumbnailURLs.value, [key]: url }
     })
   )
 }
