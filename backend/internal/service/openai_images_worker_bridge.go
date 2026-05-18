@@ -343,6 +343,8 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesViaWorker(
 		return nil, err
 	}
 	c.Data(http.StatusOK, "application/json; charset=utf-8", responseBody)
+	requestID := resp.Header.Get("x-request-id")
+	s.recordOpenAIImagesLog(ctx, c, account, parsed, requestModel, imageLogSourceChatGPT2API, requestID, startTime, results)
 
 	logger.LegacyPrintf(
 		"service.openai_gateway",
@@ -353,7 +355,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesViaWorker(
 		len(results),
 	)
 	return &OpenAIForwardResult{
-		RequestID:       resp.Header.Get("x-request-id"),
+		RequestID:       requestID,
 		Model:           requestModel,
 		UpstreamModel:   requestModel,
 		Stream:          false,

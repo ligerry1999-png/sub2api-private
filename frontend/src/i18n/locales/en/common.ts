@@ -191,6 +191,7 @@ export default {
     channelStatus: 'Channel Status',
     riskControl: 'Risk Control',
     auditLogs: 'Audit Logs',
+    imageLogs: 'Image Logs',
   },
 
   // Auth

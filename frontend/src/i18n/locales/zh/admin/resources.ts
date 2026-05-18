@@ -592,5 +592,10 @@ export default {
       }
     },
 
+    imageLogs: {
+      title: '生图日志',
+      description: '查看图片生成记录、提示词、账号和原图'
+    },
+
     // Ops Monitoring
 }
