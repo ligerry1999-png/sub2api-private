@@ -118,6 +118,15 @@ jobs:
           docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml -f docker-compose.build.yml build sub2api
           docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml -f docker-compose.build.yml up -d sub2api
 
+          if command -v nginx >/dev/null 2>&1; then
+            cp "$DEPLOY_DIR/nginx-sub2api-prod.conf" /etc/nginx/sites-available/sub2api
+            if [ -f /etc/nginx/sites-available/sub2api-preview ]; then
+              cp "$DEPLOY_DIR/nginx-sub2api-preview-8443.conf" /etc/nginx/sites-available/sub2api-preview
+            fi
+            nginx -t
+            systemctl reload nginx
+          fi
+
           for attempt in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:18080/health >/dev/null; then
               break
