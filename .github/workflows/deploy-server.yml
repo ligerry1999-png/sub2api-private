@@ -1,0 +1,108 @@
+name: Deploy Server
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: sub2api-server-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+      CHATGPT2API_INTERNAL_BRIDGE_KEY: ${{ secrets.CHATGPT2API_INTERNAL_BRIDGE_KEY }}
+
+    steps:
+      - name: Validate deploy secrets
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_HOST" || { echo "DEPLOY_HOST is required"; exit 1; }
+          test -n "$DEPLOY_USER" || { echo "DEPLOY_USER is required"; exit 1; }
+          test -n "$DEPLOY_SSH_KEY" || { echo "DEPLOY_SSH_KEY is required"; exit 1; }
+          test -n "$CHATGPT2API_INTERNAL_BRIDGE_KEY" || { echo "CHATGPT2API_INTERNAL_BRIDGE_KEY is required"; exit 1; }
+
+      - name: Configure SSH
+        run: |
+          set -euo pipefail
+          DEPLOY_PORT="${DEPLOY_PORT:-22}"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy Sub2API
+        run: |
+          set -euo pipefail
+          DEPLOY_PORT="${DEPLOY_PORT:-22}"
+          BRIDGE_KEY_B64="$(printf '%s' "$CHATGPT2API_INTERNAL_BRIDGE_KEY" | base64 -w 0)"
+
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "BRIDGE_KEY_B64='$BRIDGE_KEY_B64' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          REPO_DIR="/opt/sub2api-src"
+          DEPLOY_DIR="$REPO_DIR/deploy/tanzhongyu"
+          BACKUP_DIR="/opt/deploy-backups/sub2api-$(date -u +%Y%m%dT%H%M%SZ)"
+          BRIDGE_KEY="$(printf '%s' "$BRIDGE_KEY_B64" | base64 -d)"
+
+          upsert_env() {
+            file="$1"
+            key="$2"
+            value="$3"
+            touch "$file"
+            escaped_value="$(printf '%s' "$value" | sed -e 's/[\/&]/\\&/g')"
+            if grep -q "^${key}=" "$file"; then
+              sed -i "s/^${key}=.*/${key}=${escaped_value}/" "$file"
+            else
+              printf '%s=%s\n' "$key" "$value" >> "$file"
+            fi
+          }
+
+          cd "$REPO_DIR"
+          mkdir -p "$BACKUP_DIR"
+          git status --short > "$BACKUP_DIR/status.txt" || true
+          git diff > "$BACKUP_DIR/tracked.diff" || true
+          git ls-files --others --exclude-standard > "$BACKUP_DIR/untracked-files.txt" || true
+
+          git fetch origin main
+          while IFS= read -r -d '' path; do
+            if git ls-tree -r --name-only origin/main -- "$path" | grep -Fxq "$path"; then
+              mkdir -p "$BACKUP_DIR/untracked-conflicts/$(dirname "$path")"
+              mv "$path" "$BACKUP_DIR/untracked-conflicts/$path"
+            fi
+          done < <(git ls-files --others --exclude-standard -z)
+          git reset --hard origin/main
+
+          cd "$DEPLOY_DIR"
+          mkdir -p data postgres_data redis_data
+          if [ ! -f .env ]; then
+            cp .env.example .env
+          fi
+
+          upsert_env "$DEPLOY_DIR/.env" "SUB2API_IMAGE" "sub2api:private-prod"
+          upsert_env "$DEPLOY_DIR/.env" "GATEWAY_IMAGE_WORKER_ENABLED" "true"
+          upsert_env "$DEPLOY_DIR/.env" "GATEWAY_IMAGE_WORKER_BASE_URL" "http://host.docker.internal:3000/internal/v1"
+          upsert_env "$DEPLOY_DIR/.env" "GATEWAY_IMAGE_WORKER_TOKEN" "$BRIDGE_KEY"
+          upsert_env "$DEPLOY_DIR/.env" "GATEWAY_IMAGE_WORKER_FALLBACK_ENABLED" "true"
+          upsert_env "$DEPLOY_DIR/.env" "GATEWAY_IMAGE_WORKER_TIMEOUT_SECONDS" "900"
+
+          docker compose --env-file .env -f docker-compose.yml -f docker-compose.build.yml build sub2api
+          docker compose --env-file .env -f docker-compose.yml -f docker-compose.build.yml up -d sub2api
+
+          curl -fsS http://127.0.0.1:18080/health >/dev/null
+
+          docker image prune -f >/dev/null || true
+          docker compose --env-file .env -f docker-compose.yml -f docker-compose.build.yml ps
+          REMOTE
