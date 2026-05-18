@@ -603,6 +603,19 @@ type ImageConcurrencyConfig struct {
 	MaxWaitingRequests int `mapstructure:"max_waiting_requests"`
 }
 
+type GatewayImageWorkerConfig struct {
+	// Enabled: OAuth 图片请求是否优先转发给内部图片工人（例如 ChatGPT2API）
+	Enabled bool `mapstructure:"enabled"`
+	// BaseURL: 内部图片工人的基础地址，例如 http://chatgpt2api:3000/internal/v1
+	BaseURL string `mapstructure:"base_url"`
+	// Token: 内部图片工人的鉴权密钥，通过 X-Internal-Token 传递
+	Token string `mapstructure:"token"`
+	// FallbackEnabled: 内部图片工人失败或不支持该请求时是否回落到 Sub2API 原生图片通道
+	FallbackEnabled bool `mapstructure:"fallback_enabled"`
+	// TimeoutSeconds: 调用内部图片工人的整体超时（秒）
+	TimeoutSeconds int `mapstructure:"timeout_seconds"`
+}
+
 const (
 	ImageConcurrencyOverflowModeReject = "reject"
 	ImageConcurrencyOverflowModeWait   = "wait"
@@ -642,6 +655,8 @@ type GatewayConfig struct {
 	OpenAIWS GatewayOpenAIWSConfig `mapstructure:"openai_ws"`
 	// ImageConcurrency: 图片生成独立并发限制配置（默认关闭）
 	ImageConcurrency ImageConcurrencyConfig `mapstructure:"image_concurrency"`
+	// ImageWorker: OAuth 图片请求的内部工人桥接配置（默认关闭）
+	ImageWorker GatewayImageWorkerConfig `mapstructure:"image_worker"`
 
 	// HTTP 上游连接池配置（性能优化：支持高并发场景调优）
 	// MaxIdleConns: 所有主机的最大空闲连接总数
@@ -1327,6 +1342,8 @@ func load(allowMissingJWTSecret bool) (*Config, error) {
 	cfg.Log.Environment = strings.TrimSpace(cfg.Log.Environment)
 	cfg.Log.StacktraceLevel = strings.ToLower(strings.TrimSpace(cfg.Log.StacktraceLevel))
 	cfg.Log.Output.FilePath = strings.TrimSpace(cfg.Log.Output.FilePath)
+	cfg.Gateway.ImageWorker.BaseURL = strings.TrimRight(strings.TrimSpace(cfg.Gateway.ImageWorker.BaseURL), "/")
+	cfg.Gateway.ImageWorker.Token = strings.TrimSpace(cfg.Gateway.ImageWorker.Token)
 	cfg.Gateway.ForcedCodexInstructionsTemplateFile = strings.TrimSpace(cfg.Gateway.ForcedCodexInstructionsTemplateFile)
 	if cfg.Gateway.ForcedCodexInstructionsTemplateFile != "" {
 		content, err := os.ReadFile(cfg.Gateway.ForcedCodexInstructionsTemplateFile)
@@ -1720,6 +1737,11 @@ func setDefaults() {
 	viper.SetDefault("gateway.image_concurrency.overflow_mode", ImageConcurrencyOverflowModeReject)
 	viper.SetDefault("gateway.image_concurrency.wait_timeout_seconds", 30)
 	viper.SetDefault("gateway.image_concurrency.max_waiting_requests", 100)
+	viper.SetDefault("gateway.image_worker.enabled", false)
+	viper.SetDefault("gateway.image_worker.base_url", "")
+	viper.SetDefault("gateway.image_worker.token", "")
+	viper.SetDefault("gateway.image_worker.fallback_enabled", true)
+	viper.SetDefault("gateway.image_worker.timeout_seconds", 900)
 	viper.SetDefault("gateway.antigravity_fallback_cooldown_minutes", 1)
 	viper.SetDefault("gateway.antigravity_extra_retries", 10)
 	viper.SetDefault("gateway.max_body_size", int64(256*1024*1024))
@@ -2303,6 +2325,20 @@ func (c *Config) Validate() error {
 	}
 	if c.Gateway.ImageConcurrency.MaxWaitingRequests < 0 {
 		return fmt.Errorf("gateway.image_concurrency.max_waiting_requests must be non-negative")
+	}
+	if c.Gateway.ImageWorker.TimeoutSeconds < 0 {
+		return fmt.Errorf("gateway.image_worker.timeout_seconds must be non-negative")
+	}
+	if c.Gateway.ImageWorker.Enabled {
+		if strings.TrimSpace(c.Gateway.ImageWorker.BaseURL) == "" {
+			return fmt.Errorf("gateway.image_worker.base_url is required when gateway.image_worker.enabled=true")
+		}
+		if err := ValidateAbsoluteHTTPURL(c.Gateway.ImageWorker.BaseURL); err != nil {
+			return fmt.Errorf("gateway.image_worker.base_url invalid: %w", err)
+		}
+		if strings.TrimSpace(c.Gateway.ImageWorker.Token) == "" {
+			return fmt.Errorf("gateway.image_worker.token is required when gateway.image_worker.enabled=true")
+		}
 	}
 	if c.Gateway.MaxIdleConns <= 0 {
 		return fmt.Errorf("gateway.max_idle_conns must be positive")

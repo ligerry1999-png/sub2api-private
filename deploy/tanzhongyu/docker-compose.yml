@@ -5,6 +5,8 @@ services:
     restart: unless-stopped
     ports:
       - "${BIND_HOST:-127.0.0.1}:${SERVER_PORT:-18080}:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/app/data
     environment:
@@ -35,6 +37,11 @@ services:
       - GATEWAY_FORCE_CODEX_CLI=${GATEWAY_FORCE_CODEX_CLI:-true}
       - GATEWAY_IMAGE_CONCURRENCY_ENABLED=${GATEWAY_IMAGE_CONCURRENCY_ENABLED:-false}
       - GATEWAY_IMAGE_CONCURRENCY_MAX_CONCURRENT_REQUESTS=${GATEWAY_IMAGE_CONCURRENCY_MAX_CONCURRENT_REQUESTS:-0}
+      - GATEWAY_IMAGE_WORKER_ENABLED=${GATEWAY_IMAGE_WORKER_ENABLED:-false}
+      - GATEWAY_IMAGE_WORKER_BASE_URL=${GATEWAY_IMAGE_WORKER_BASE_URL:-}
+      - GATEWAY_IMAGE_WORKER_TOKEN=${GATEWAY_IMAGE_WORKER_TOKEN:-}
+      - GATEWAY_IMAGE_WORKER_FALLBACK_ENABLED=${GATEWAY_IMAGE_WORKER_FALLBACK_ENABLED:-true}
+      - GATEWAY_IMAGE_WORKER_TIMEOUT_SECONDS=${GATEWAY_IMAGE_WORKER_TIMEOUT_SECONDS:-900}
     depends_on:
       postgres:
         condition: service_healthy
@@ -93,4 +100,3 @@ services:
 networks:
   sub2api-private-network:
     driver: bridge
-
