@@ -25,6 +25,9 @@ jobs:
       CHATGPT2API_INTERNAL_BRIDGE_KEY: ${{ secrets.CHATGPT2API_INTERNAL_BRIDGE_KEY }}
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
       - name: Validate deploy secrets
         run: |
           set -euo pipefail
@@ -42,6 +45,31 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
 
+      - name: Upload release bundle
+        run: |
+          set -euo pipefail
+          DEPLOY_PORT="${DEPLOY_PORT:-22}"
+          BUNDLE="/tmp/sub2api-release-${GITHUB_SHA}.tgz"
+          tar --exclude='.git' -czf "$BUNDLE" .
+          scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" "$BUNDLE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/sub2api-release.tgz"
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" <<'REMOTE'
+          set -euo pipefail
+          RELEASE_DIR="/opt/sub2api-release"
+          NEXT_DIR="/opt/sub2api-release.next"
+          PREV_DIR="/opt/sub2api-release.prev"
+
+          rm -rf "$NEXT_DIR"
+          mkdir -p "$NEXT_DIR"
+          tar -xzf /tmp/sub2api-release.tgz -C "$NEXT_DIR"
+          rm -f /tmp/sub2api-release.tgz
+
+          rm -rf "$PREV_DIR"
+          if [ -d "$RELEASE_DIR" ]; then
+            mv "$RELEASE_DIR" "$PREV_DIR"
+          fi
+          mv "$NEXT_DIR" "$RELEASE_DIR"
+          REMOTE
+
       - name: Deploy Sub2API
         run: |
           set -euo pipefail
@@ -52,9 +80,9 @@ jobs:
             "BRIDGE_KEY_B64='$BRIDGE_KEY_B64' bash -s" <<'REMOTE'
           set -euo pipefail
 
-          REPO_DIR="/opt/sub2api-src"
+          REPO_DIR="/opt/sub2api-release"
           DEPLOY_DIR="$REPO_DIR/deploy/tanzhongyu"
-          BACKUP_DIR="/opt/deploy-backups/sub2api-$(date -u +%Y%m%dT%H%M%SZ)"
+          RUNTIME_DIR="/opt/sub2api-src/deploy/tanzhongyu"
           BRIDGE_KEY="$(printf '%s' "$BRIDGE_KEY_B64" | base64 -d)"
 
           upsert_env() {
@@ -70,39 +98,27 @@ jobs:
             fi
           }
 
-          cd "$REPO_DIR"
-          mkdir -p "$BACKUP_DIR"
-          git status --short > "$BACKUP_DIR/status.txt" || true
-          git diff > "$BACKUP_DIR/tracked.diff" || true
-          git ls-files --others --exclude-standard > "$BACKUP_DIR/untracked-files.txt" || true
-
-          git fetch origin main
-          while IFS= read -r -d '' path; do
-            if git ls-tree -r --name-only origin/main -- "$path" | grep -Fxq "$path"; then
-              mkdir -p "$BACKUP_DIR/untracked-conflicts/$(dirname "$path")"
-              mv "$path" "$BACKUP_DIR/untracked-conflicts/$path"
-            fi
-          done < <(git ls-files --others --exclude-standard -z)
-          git reset --hard origin/main
-
-          cd "$DEPLOY_DIR"
-          mkdir -p data postgres_data redis_data
-          if [ ! -f .env ]; then
-            cp .env.example .env
+          mkdir -p "$RUNTIME_DIR/data" "$RUNTIME_DIR/postgres_data" "$RUNTIME_DIR/redis_data" "$RUNTIME_DIR/backups"
+          if [ ! -f "$RUNTIME_DIR/.env" ]; then
+            cp "$DEPLOY_DIR/.env.example" "$RUNTIME_DIR/.env"
           fi
 
-          upsert_env "$DEPLOY_DIR/.env" "SUB2API_IMAGE" "sub2api:private-prod"
-          upsert_env "$DEPLOY_DIR/.env" "GATEWAY_IMAGE_WORKER_ENABLED" "true"
-          upsert_env "$DEPLOY_DIR/.env" "GATEWAY_IMAGE_WORKER_BASE_URL" "http://host.docker.internal:3000/internal/v1"
-          upsert_env "$DEPLOY_DIR/.env" "GATEWAY_IMAGE_WORKER_TOKEN" "$BRIDGE_KEY"
-          upsert_env "$DEPLOY_DIR/.env" "GATEWAY_IMAGE_WORKER_FALLBACK_ENABLED" "true"
-          upsert_env "$DEPLOY_DIR/.env" "GATEWAY_IMAGE_WORKER_TIMEOUT_SECONDS" "900"
+          upsert_env "$RUNTIME_DIR/.env" "SUB2API_IMAGE" "sub2api:private-prod"
+          upsert_env "$RUNTIME_DIR/.env" "SUB2API_DATA_DIR" "$RUNTIME_DIR/data"
+          upsert_env "$RUNTIME_DIR/.env" "SUB2API_POSTGRES_DATA_DIR" "$RUNTIME_DIR/postgres_data"
+          upsert_env "$RUNTIME_DIR/.env" "SUB2API_REDIS_DATA_DIR" "$RUNTIME_DIR/redis_data"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_IMAGE_WORKER_ENABLED" "true"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_IMAGE_WORKER_BASE_URL" "http://host.docker.internal:3000/internal/v1"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_IMAGE_WORKER_TOKEN" "$BRIDGE_KEY"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_IMAGE_WORKER_FALLBACK_ENABLED" "true"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_IMAGE_WORKER_TIMEOUT_SECONDS" "900"
 
-          docker compose --env-file .env -f docker-compose.yml -f docker-compose.build.yml build sub2api
-          docker compose --env-file .env -f docker-compose.yml -f docker-compose.build.yml up -d sub2api
+          cd "$DEPLOY_DIR"
+          docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml -f docker-compose.build.yml build sub2api
+          docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml -f docker-compose.build.yml up -d sub2api
 
           curl -fsS http://127.0.0.1:18080/health >/dev/null
 
           docker image prune -f >/dev/null || true
-          docker compose --env-file .env -f docker-compose.yml -f docker-compose.build.yml ps
+          docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml -f docker-compose.build.yml ps
           REMOTE
