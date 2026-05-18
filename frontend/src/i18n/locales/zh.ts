@@ -4451,6 +4451,10 @@ export default {
           failed: '失败',
           canceled: '已取消'
         }
+      },
+      imageLogs: {
+        title: '生图日志',
+        description: '查看图片生成记录、提示词、账号和原图'
       }
     },
 

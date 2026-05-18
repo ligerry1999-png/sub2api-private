@@ -4295,6 +4295,10 @@ export default {
           failed: 'Failed',
           canceled: 'Canceled'
         }
+      },
+      imageLogs: {
+        title: 'Image Logs',
+        description: 'View image generation records, prompts, accounts, and originals'
       }
     },
 

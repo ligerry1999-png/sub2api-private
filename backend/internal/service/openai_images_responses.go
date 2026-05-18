@@ -546,8 +546,11 @@ func (s *OpenAIGatewayService) tryWriteOpenAIImagesStreamEvent(
 func (s *OpenAIGatewayService) handleOpenAIImagesOAuthNonStreamingResponse(
 	resp *http.Response,
 	c *gin.Context,
+	account *Account,
+	parsed *OpenAIImagesRequest,
 	responseFormat string,
 	fallbackModel string,
+	startTime time.Time,
 ) (OpenAIUsage, int, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
@@ -575,6 +578,9 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthNonStreamingResponse(
 	}
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	c.Data(resp.StatusCode, "application/json; charset=utf-8", responseBody)
+	if parsed != nil {
+		s.recordOpenAIImagesLog(c.Request.Context(), c, account, parsed, fallbackModel, imageLogSourceSub2API, resp.Header.Get("x-request-id"), startTime, results)
+	}
 	return usage, len(results), nil
 }
 
@@ -1064,7 +1070,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 			return nil, err
 		}
 	} else {
-		usage, imageCount, err = s.handleOpenAIImagesOAuthNonStreamingResponse(resp, c, parsed.ResponseFormat, requestModel)
+		usage, imageCount, err = s.handleOpenAIImagesOAuthNonStreamingResponse(resp, c, account, parsed, parsed.ResponseFormat, requestModel, startTime)
 		if err != nil {
 			return nil, err
 		}
