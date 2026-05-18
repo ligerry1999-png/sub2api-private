@@ -12,6 +12,7 @@ export interface ImageLogImage {
   index: number
   mime_type: string
   thumbnail_data_url?: string
+  thumbnail_url?: string
   size_bytes: number
   width?: number
   height?: number
@@ -39,6 +40,7 @@ export interface ImageLog {
   account?: ImageLogPerson
   group?: ImageLogPerson
   images: ImageLogImage[]
+  metadata?: Record<string, unknown>
 }
 
 export interface ImageLogQueryParams {
@@ -79,9 +81,17 @@ export async function getImageDataURL(id: number, index: number): Promise<string
   })
 }
 
+export async function getThumbnailObjectURL(id: number, index: number): Promise<string> {
+  const { data } = await apiClient.get<Blob>(`/admin/image-logs/${id}/thumbnails/${index}`, {
+    responseType: 'blob'
+  })
+  return URL.createObjectURL(data)
+}
+
 const imageLogsAPI = {
   list,
-  getImageDataURL
+  getImageDataURL,
+  getThumbnailObjectURL
 }
 
 export default imageLogsAPI

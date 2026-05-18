@@ -83,6 +83,8 @@ type ImageLogRepository interface {
 	Create(ctx context.Context, item *ImageLog) error
 	List(ctx context.Context, params pagination.PaginationParams, filters ImageLogListFilter) ([]ImageLog, *pagination.PaginationResult, error)
 	GetByID(ctx context.Context, id int64) (*ImageLog, error)
+	ListExpired(ctx context.Context, cutoff time.Time, limit int) ([]ImageLog, error)
+	DeleteByIDs(ctx context.Context, ids []int64) (int64, error)
 }
 
 type RecordImageLogInput struct {
@@ -108,11 +110,7 @@ type ImageLogService struct {
 }
 
 func NewImageLogService(repo ImageLogRepository, cfg *config.Config) *ImageLogService {
-	dataDir := "./data"
-	if cfg != nil && strings.TrimSpace(cfg.Pricing.DataDir) != "" {
-		dataDir = strings.TrimSpace(cfg.Pricing.DataDir)
-	}
-	return &ImageLogService{repo: repo, dataDir: dataDir}
+	return &ImageLogService{repo: repo, dataDir: resolveImageLogDataDir(cfg)}
 }
 
 func (s *ImageLogService) List(ctx context.Context, params pagination.PaginationParams, filters ImageLogListFilter) ([]ImageLog, *pagination.PaginationResult, error) {
@@ -230,17 +228,44 @@ func (s *ImageLogService) ImageBytes(ctx context.Context, id int64, index int) (
 		if strings.TrimSpace(img.FilePath) == "" {
 			return nil, "", fmt.Errorf("image file not found")
 		}
-		data, err := os.ReadFile(s.storagePath(img.FilePath))
-		if err != nil {
-			return nil, "", err
-		}
-		mimeType := strings.TrimSpace(img.MIMEType)
-		if mimeType == "" {
-			mimeType = http.DetectContentType(data)
-		}
-		return data, mimeType, nil
+		return s.readImageLogFile(img.FilePath, img.MIMEType)
 	}
 	return nil, "", fmt.Errorf("image index not found")
+}
+
+func (s *ImageLogService) ThumbnailBytes(ctx context.Context, id int64, index int) ([]byte, string, error) {
+	item, err := s.GetByID(ctx, id)
+	if err != nil {
+		return nil, "", err
+	}
+	for _, img := range item.Images {
+		if img.Index != index {
+			continue
+		}
+		path := strings.TrimSpace(img.ThumbnailPath)
+		mimeType := "image/jpeg"
+		if path == "" {
+			path = strings.TrimSpace(img.FilePath)
+			mimeType = strings.TrimSpace(img.MIMEType)
+		}
+		if path == "" {
+			return nil, "", fmt.Errorf("image thumbnail not found")
+		}
+		return s.readImageLogFile(path, mimeType)
+	}
+	return nil, "", fmt.Errorf("image index not found")
+}
+
+func (s *ImageLogService) readImageLogFile(path string, mimeType string) ([]byte, string, error) {
+	data, err := os.ReadFile(s.storagePath(path))
+	if err != nil {
+		return nil, "", err
+	}
+	mimeType = strings.TrimSpace(mimeType)
+	if mimeType == "" {
+		mimeType = http.DetectContentType(data)
+	}
+	return data, mimeType, nil
 }
 
 func (s *ImageLogService) saveImageResults(createdAt time.Time, results []openAIResponsesImageResult) ([]ImageLogImage, error) {
@@ -332,6 +357,14 @@ func (s *ImageLogService) storagePath(rel string) string {
 		return clean
 	}
 	return filepath.Join(s.dataDir, clean)
+}
+
+func resolveImageLogDataDir(cfg *config.Config) string {
+	dataDir := "./data"
+	if cfg != nil && strings.TrimSpace(cfg.Pricing.DataDir) != "" {
+		dataDir = strings.TrimSpace(cfg.Pricing.DataDir)
+	}
+	return dataDir
 }
 
 func defaultImageLogSource(source string) string {

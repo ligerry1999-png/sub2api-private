@@ -52,8 +52,8 @@
               @click="openPreview(log, log.images[0])"
             >
               <img
-                v-if="log.images[0]?.thumbnail_data_url"
-                :src="log.images[0].thumbnail_data_url"
+                v-if="thumbnailSrc(log, log.images[0])"
+                :src="thumbnailSrc(log, log.images[0])"
                 :alt="log.prompt"
                 class="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
               />
@@ -96,6 +96,7 @@
                 <div class="truncate">密钥：{{ log.api_key?.name || `#${log.api_key_id}` }}</div>
                 <div class="truncate">账号：{{ log.account?.name || '未记录' }}</div>
                 <div class="truncate">耗时：{{ formatDuration(log.duration_ms) }}</div>
+                <div class="truncate">阶段：{{ routeDurationLabel(log) }}</div>
               </div>
             </div>
 
@@ -158,6 +159,7 @@
           <div>模型：{{ selectedLog.model || '未知模型' }}</div>
           <div>时间：{{ formatDateTime(selectedLog.created_at) }}</div>
           <div>耗时：{{ formatDuration(selectedLog.duration_ms) }}</div>
+          <div>阶段耗时：{{ routeDurationLabel(selectedLog) }}</div>
           <div>请求 ID：{{ selectedLog.request_id || '未记录' }}</div>
         </div>
         <div v-if="selectedLog.images.length > 1" class="grid grid-cols-4 gap-2">
@@ -169,8 +171,8 @@
             @click="openPreview(selectedLog, img)"
           >
             <img
-              v-if="img.thumbnail_data_url"
-              :src="img.thumbnail_data_url"
+              v-if="thumbnailSrc(selectedLog, img)"
+              :src="thumbnailSrc(selectedLog, img)"
               class="h-full w-full object-cover"
               alt=""
             />
@@ -182,7 +184,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { AxiosError } from 'axios'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
@@ -206,7 +208,9 @@ const previewLoading = ref(false)
 const previewDataURL = ref('')
 const selectedLog = ref<ImageLog | null>(null)
 const selectedImage = ref<ImageLogImage | null>(null)
+const thumbnailURLs = ref<Record<string, string>>({})
 let abortController: AbortController | null = null
+let thumbnailLoadSeq = 0
 
 const pagination = reactive({
   page: 1,
@@ -248,6 +252,74 @@ const formatDuration = (ms?: number | null) => {
   return `${(ms / 1000).toFixed(1)} s`
 }
 
+const metadataNumber = (log: ImageLog, key: string) => {
+  const value = log.metadata?.[key]
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return null
+}
+
+const routeDurationLabel = (log: ImageLog) => {
+  const worker = metadataNumber(log, 'worker_duration_ms')
+  if (worker != null) return `网关 ${formatDuration(worker)}`
+  const native = metadataNumber(log, 'native_duration_ms')
+  if (native != null) return `原生 ${formatDuration(native)}`
+  return '未记录'
+}
+
+const imageKey = (log: ImageLog, image?: ImageLogImage) => {
+  if (!image) return ''
+  return `${log.id}:${image.index}`
+}
+
+const thumbnailSrc = (log: ImageLog | null, image?: ImageLogImage) => {
+  if (!log || !image) return ''
+  const key = imageKey(log, image)
+  return thumbnailURLs.value[key] || image.thumbnail_data_url || ''
+}
+
+const revokeThumbnailURLs = (keepKeys = new Set<string>()) => {
+  const next: Record<string, string> = {}
+  for (const [key, url] of Object.entries(thumbnailURLs.value)) {
+    if (keepKeys.has(key)) {
+      next[key] = url
+      continue
+    }
+    URL.revokeObjectURL(url)
+  }
+  thumbnailURLs.value = next
+}
+
+const loadThumbnails = async (items: ImageLog[]) => {
+  const seq = ++thumbnailLoadSeq
+  const nextKeys = new Set<string>()
+  const targets: Array<{ log: ImageLog; image: ImageLogImage; key: string }> = []
+  for (const log of items) {
+    for (const image of log.images) {
+      const key = imageKey(log, image)
+      if (!key) continue
+      nextKeys.add(key)
+      if (!thumbnailURLs.value[key]) {
+        targets.push({ log, image, key })
+      }
+    }
+  }
+  revokeThumbnailURLs(nextKeys)
+  await Promise.allSettled(
+    targets.map(async ({ log, image, key }) => {
+      const url = await adminAPI.imageLogs.getThumbnailObjectURL(log.id, image.index)
+      if (seq !== thumbnailLoadSeq || !nextKeys.has(key)) {
+        URL.revokeObjectURL(url)
+        return
+      }
+      thumbnailURLs.value = { ...thumbnailURLs.value, [key]: url }
+    })
+  )
+}
+
 const loadLogs = async () => {
   abortController?.abort()
   abortController = new AbortController()
@@ -269,6 +341,7 @@ const loadLogs = async () => {
     pagination.total = res.total
     pagination.page = res.page
     pagination.page_size = res.page_size
+    void loadThumbnails(res.items)
   } catch (error) {
     if (error instanceof AxiosError && error.code === 'ERR_CANCELED') return
     appStore.showError('加载生图日志失败')
@@ -326,5 +399,11 @@ const closePreview = () => {
 
 onMounted(() => {
   void loadLogs()
+})
+
+onBeforeUnmount(() => {
+  abortController?.abort()
+  thumbnailLoadSeq++
+  revokeThumbnailURLs()
 })
 </script>

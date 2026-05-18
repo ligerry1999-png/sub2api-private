@@ -1239,6 +1239,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthNonStreamingResponse(
 	responseFormat string,
 	fallbackModel string,
 	startTime time.Time,
+	nativeStartTime time.Time,
 ) (OpenAIUsage, int, []string, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
@@ -1304,7 +1305,13 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthNonStreamingResponse(
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	c.Data(resp.StatusCode, "application/json; charset=utf-8", responseBody)
 	if parsed != nil {
-		s.recordOpenAIImagesLog(c.Request.Context(), c, account, parsed, fallbackModel, imageLogSourceSub2API, resp.Header.Get("x-request-id"), startTime, results)
+		metadata := map[string]any{
+			"route": imageLogSourceSub2API,
+		}
+		if !nativeStartTime.IsZero() {
+			metadata["native_duration_ms"] = time.Since(nativeStartTime).Milliseconds()
+		}
+		s.recordOpenAIImagesLog(c.Request.Context(), c, account, parsed, fallbackModel, imageLogSourceSub2API, resp.Header.Get("x-request-id"), startTime, results, metadata)
 	}
 	return usage, len(results), openAIResponsesImageResultSizes(results), nil
 }
@@ -1768,6 +1775,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		proxyURL = account.Proxy.URL()
 	}
 	upstreamStart := time.Now()
+	nativeStart := upstreamStart
 	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
@@ -1860,7 +1868,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 			)
 		}
 	} else {
-		usage, imageCount, imageOutputSizes, err = s.handleOpenAIImagesOAuthNonStreamingResponse(resp, c, account, parsed, parsed.ResponseFormat, requestModel, startTime)
+		usage, imageCount, imageOutputSizes, err = s.handleOpenAIImagesOAuthNonStreamingResponse(resp, c, account, parsed, parsed.ResponseFormat, requestModel, startTime, nativeStart)
 		if err != nil {
 			return nil, s.handleOpenAIImagesOAuthResponseError(
 				upstreamCtx,
