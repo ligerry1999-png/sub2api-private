@@ -106,6 +106,7 @@ func ProvideHandlers(
 	availableChannelHandler *AvailableChannelHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
+	_ *service.ImageLogCleanupService,
 ) *Handlers {
 	return &Handlers{
 		Auth:             authHandler,

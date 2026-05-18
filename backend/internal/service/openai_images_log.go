@@ -20,6 +20,7 @@ func (s *OpenAIGatewayService) recordOpenAIImagesLog(
 	requestID string,
 	startTime time.Time,
 	results []openAIResponsesImageResult,
+	extraMetadata map[string]any,
 ) {
 	if s == nil || s.imageLogService == nil || c == nil || parsed == nil || len(results) == 0 {
 		return
@@ -63,6 +64,13 @@ func (s *OpenAIGatewayService) recordOpenAIImagesLog(
 			"n":               parsed.N,
 			"stream":          parsed.Stream,
 		},
+	}
+	for key, value := range extraMetadata {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		input.Metadata[key] = value
 	}
 	if err := s.imageLogService.RecordOpenAIImages(ctx, input); err != nil {
 		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] image log record failed request_id=%s err=%v", requestID, err)

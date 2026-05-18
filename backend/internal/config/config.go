@@ -84,6 +84,7 @@ type Config struct {
 	Dashboard               DashboardCacheConfig          `mapstructure:"dashboard_cache"`
 	DashboardAgg            DashboardAggregationConfig    `mapstructure:"dashboard_aggregation"`
 	UsageCleanup            UsageCleanupConfig            `mapstructure:"usage_cleanup"`
+	ImageLogs               ImageLogConfig                `mapstructure:"image_logs"`
 	Concurrency             ConcurrencyConfig             `mapstructure:"concurrency"`
 	TokenRefresh            TokenRefreshConfig            `mapstructure:"token_refresh"`
 	RunMode                 string                        `mapstructure:"run_mode" yaml:"run_mode"`
@@ -1232,6 +1233,18 @@ type UsageCleanupConfig struct {
 	TaskTimeoutSeconds int `mapstructure:"task_timeout_seconds"`
 }
 
+// ImageLogConfig 生图日志存储与自动清理配置
+type ImageLogConfig struct {
+	// CleanupEnabled: 是否启用生图日志自动清理
+	CleanupEnabled bool `mapstructure:"cleanup_enabled"`
+	// RetentionDays: 生图日志保留天数，超过后删除数据库记录和本地图片文件
+	RetentionDays int `mapstructure:"retention_days"`
+	// CleanupIntervalSeconds: 后台清理检查间隔（秒）
+	CleanupIntervalSeconds int `mapstructure:"cleanup_interval_seconds"`
+	// CleanupBatchSize: 单批清理日志数量
+	CleanupBatchSize int `mapstructure:"cleanup_batch_size"`
+}
+
 func NormalizeRunMode(value string) string {
 	normalized := strings.ToLower(strings.TrimSpace(value))
 	switch normalized {
@@ -1665,6 +1678,12 @@ func setDefaults() {
 	viper.SetDefault("usage_cleanup.worker_interval_seconds", 10)
 	viper.SetDefault("usage_cleanup.task_timeout_seconds", 1800)
 
+	// Image logs
+	viper.SetDefault("image_logs.cleanup_enabled", true)
+	viper.SetDefault("image_logs.retention_days", 30)
+	viper.SetDefault("image_logs.cleanup_interval_seconds", 3600)
+	viper.SetDefault("image_logs.cleanup_batch_size", 500)
+
 	// Idempotency
 	viper.SetDefault("idempotency.observe_only", true)
 	viper.SetDefault("idempotency.default_ttl_seconds", 86400)
@@ -1676,7 +1695,7 @@ func setDefaults() {
 	viper.SetDefault("idempotency.cleanup_batch_size", 500)
 
 	// Gateway
-	viper.SetDefault("gateway.response_header_timeout", 600) // 600秒(10分钟)等待上游响应头，LLM高负载时可能排队较久
+	viper.SetDefault("gateway.response_header_timeout", 1200) // 1200秒(20分钟)等待上游响应头，4K生图高负载时可能排队较久
 	viper.SetDefault("gateway.log_upstream_error_body", true)
 	viper.SetDefault("gateway.log_upstream_error_body_max_bytes", 2048)
 	viper.SetDefault("gateway.inject_beta_for_apikey", false)
@@ -1741,7 +1760,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.image_worker.base_url", "")
 	viper.SetDefault("gateway.image_worker.token", "")
 	viper.SetDefault("gateway.image_worker.fallback_enabled", true)
-	viper.SetDefault("gateway.image_worker.timeout_seconds", 900)
+	viper.SetDefault("gateway.image_worker.timeout_seconds", 1200)
 	viper.SetDefault("gateway.antigravity_fallback_cooldown_minutes", 1)
 	viper.SetDefault("gateway.antigravity_extra_retries", 10)
 	viper.SetDefault("gateway.max_body_size", int64(256*1024*1024))
@@ -2271,6 +2290,27 @@ func (c *Config) Validate() error {
 		}
 		if c.UsageCleanup.TaskTimeoutSeconds < 0 {
 			return fmt.Errorf("usage_cleanup.task_timeout_seconds must be non-negative")
+		}
+	}
+	if c.ImageLogs.CleanupEnabled {
+		if c.ImageLogs.RetentionDays <= 0 {
+			return fmt.Errorf("image_logs.retention_days must be positive")
+		}
+		if c.ImageLogs.CleanupIntervalSeconds <= 0 {
+			return fmt.Errorf("image_logs.cleanup_interval_seconds must be positive")
+		}
+		if c.ImageLogs.CleanupBatchSize <= 0 {
+			return fmt.Errorf("image_logs.cleanup_batch_size must be positive")
+		}
+	} else {
+		if c.ImageLogs.RetentionDays < 0 {
+			return fmt.Errorf("image_logs.retention_days must be non-negative")
+		}
+		if c.ImageLogs.CleanupIntervalSeconds < 0 {
+			return fmt.Errorf("image_logs.cleanup_interval_seconds must be non-negative")
+		}
+		if c.ImageLogs.CleanupBatchSize < 0 {
+			return fmt.Errorf("image_logs.cleanup_batch_size must be non-negative")
 		}
 	}
 	if c.Idempotency.DefaultTTLSeconds <= 0 {

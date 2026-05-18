@@ -143,6 +143,13 @@ func ProvideUsageCleanupService(repo UsageCleanupRepository, timingWheel *Timing
 	return svc
 }
 
+// ProvideImageLogCleanupService 创建并启动生图日志清理服务
+func ProvideImageLogCleanupService(repo ImageLogRepository, timingWheel *TimingWheelService, cfg *config.Config) *ImageLogCleanupService {
+	svc := NewImageLogCleanupService(repo, timingWheel, cfg)
+	svc.Start()
+	return svc
+}
+
 // ProvideAccountExpiryService creates and starts AccountExpiryService.
 func ProvideAccountExpiryService(accountRepo AccountRepository) *AccountExpiryService {
 	svc := NewAccountExpiryService(accountRepo, time.Minute)
@@ -496,6 +503,7 @@ var ProviderSet = wire.NewSet(
 	ProvideTimingWheelService,
 	ProvideDashboardAggregationService,
 	ProvideUsageCleanupService,
+	ProvideImageLogCleanupService,
 	ProvideDeferredService,
 	NewAntigravityQuotaFetcher,
 	NewUserAttributeService,

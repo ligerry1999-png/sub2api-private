@@ -111,7 +111,8 @@ jobs:
           upsert_env "$RUNTIME_DIR/.env" "GATEWAY_IMAGE_WORKER_BASE_URL" "http://host.docker.internal:3000/internal/v1"
           upsert_env "$RUNTIME_DIR/.env" "GATEWAY_IMAGE_WORKER_TOKEN" "$BRIDGE_KEY"
           upsert_env "$RUNTIME_DIR/.env" "GATEWAY_IMAGE_WORKER_FALLBACK_ENABLED" "true"
-          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_IMAGE_WORKER_TIMEOUT_SECONDS" "900"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_RESPONSE_HEADER_TIMEOUT" "1200"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_IMAGE_WORKER_TIMEOUT_SECONDS" "1200"
 
           cd "$DEPLOY_DIR"
           docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml -f docker-compose.build.yml build sub2api

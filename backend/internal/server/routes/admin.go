@@ -545,6 +545,7 @@ func registerImageLogRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 	imageLogs := admin.Group("/image-logs")
 	{
 		imageLogs.GET("", h.Admin.ImageLog.List)
+		imageLogs.GET("/:id/thumbnails/:index", h.Admin.ImageLog.GetThumbnail)
 		imageLogs.GET("/:id/images/:index", h.Admin.ImageLog.GetImage)
 	}
 }
