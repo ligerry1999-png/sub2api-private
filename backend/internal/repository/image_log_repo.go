@@ -156,6 +156,58 @@ func (r *imageLogRepository) GetByID(ctx context.Context, id int64) (*service.Im
 	return &item, rows.Err()
 }
 
+func (r *imageLogRepository) ListExpired(ctx context.Context, cutoff time.Time, limit int) ([]service.ImageLog, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, images
+		FROM image_logs
+		WHERE created_at < $1
+		ORDER BY created_at ASC, id ASC
+		LIMIT $2
+	`, cutoff, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]service.ImageLog, 0, limit)
+	for rows.Next() {
+		var item service.ImageLog
+		var imagesRaw []byte
+		if err := rows.Scan(&item.ID, &imagesRaw); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(imagesRaw, &item.Images)
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func (r *imageLogRepository) DeleteByIDs(ctx context.Context, ids []int64) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	placeholders := make([]string, 0, len(ids))
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		args = append(args, id)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)))
+	}
+	if len(args) == 0 {
+		return 0, nil
+	}
+	result, err := r.db.ExecContext(ctx, `DELETE FROM image_logs WHERE id IN (`+strings.Join(placeholders, ",")+`)`, args...)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 func buildImageLogWhere(filters service.ImageLogListFilter) ([]string, []any) {
 	conditions := []string{"1=1"}
 	args := make([]any, 0)

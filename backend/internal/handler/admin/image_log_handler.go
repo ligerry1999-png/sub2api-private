@@ -3,6 +3,7 @@ package admin
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -31,12 +32,12 @@ type imageLogPersonDTO struct {
 }
 
 type imageLogImageDTO struct {
-	Index            int    `json:"index"`
-	MIMEType         string `json:"mime_type"`
-	ThumbnailDataURL string `json:"thumbnail_data_url,omitempty"`
-	SizeBytes        int64  `json:"size_bytes"`
-	Width            int    `json:"width,omitempty"`
-	Height           int    `json:"height,omitempty"`
+	Index        int    `json:"index"`
+	MIMEType     string `json:"mime_type"`
+	ThumbnailURL string `json:"thumbnail_url,omitempty"`
+	SizeBytes    int64  `json:"size_bytes"`
+	Width        int    `json:"width,omitempty"`
+	Height       int    `json:"height,omitempty"`
 }
 
 type imageLogDTO struct {
@@ -61,6 +62,7 @@ type imageLogDTO struct {
 	Account      *imageLogPersonDTO `json:"account,omitempty"`
 	Group        *imageLogPersonDTO `json:"group,omitempty"`
 	Images       []imageLogImageDTO `json:"images"`
+	Metadata     map[string]any     `json:"metadata,omitempty"`
 }
 
 func (h *ImageLogHandler) List(c *gin.Context) {
@@ -113,16 +115,42 @@ func (h *ImageLogHandler) GetImage(c *gin.Context) {
 	c.Data(http.StatusOK, mimeType, data)
 }
 
+func (h *ImageLogHandler) GetThumbnail(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		response.BadRequest(c, "Invalid image log ID")
+		return
+	}
+	index, err := strconv.Atoi(c.Param("index"))
+	if err != nil || index < 0 {
+		response.BadRequest(c, "Invalid image index")
+		return
+	}
+	data, mimeType, err := h.imageLogService.ThumbnailBytes(c.Request.Context(), id, index)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			response.NotFound(c, "Image log not found")
+			return
+		}
+		response.ErrorFrom(c, err)
+		return
+	}
+	if mimeType == "" {
+		mimeType = http.DetectContentType(data)
+	}
+	c.Data(http.StatusOK, mimeType, data)
+}
+
 func (h *ImageLogHandler) toDTO(item service.ImageLog) imageLogDTO {
 	images := make([]imageLogImageDTO, 0, len(item.Images))
 	for _, img := range item.Images {
 		images = append(images, imageLogImageDTO{
-			Index:            img.Index,
-			MIMEType:         img.MIMEType,
-			ThumbnailDataURL: h.imageLogService.ThumbnailDataURL(item, img),
-			SizeBytes:        img.SizeBytes,
-			Width:            img.Width,
-			Height:           img.Height,
+			Index:        img.Index,
+			MIMEType:     img.MIMEType,
+			ThumbnailURL: fmt.Sprintf("/admin/image-logs/%d/thumbnails/%d", item.ID, img.Index),
+			SizeBytes:    img.SizeBytes,
+			Width:        img.Width,
+			Height:       img.Height,
 		})
 	}
 	out := imageLogDTO{
@@ -143,6 +171,7 @@ func (h *ImageLogHandler) toDTO(item service.ImageLog) imageLogDTO {
 		DurationMs:   item.DurationMs,
 		CreatedAt:    item.CreatedAt,
 		Images:       images,
+		Metadata:     item.Metadata,
 	}
 	if item.User != nil {
 		out.User = &imageLogPersonDTO{ID: item.User.ID, Email: item.User.Email, Username: item.User.Username}

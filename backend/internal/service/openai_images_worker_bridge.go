@@ -312,6 +312,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesViaWorker(
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("X-Internal-Token", strings.TrimSpace(cfg.Token))
 
+	workerStart := time.Now()
 	upstreamStart := time.Now()
 	resp, err := http.DefaultClient.Do(req)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
@@ -344,7 +345,10 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesViaWorker(
 	}
 	c.Data(http.StatusOK, "application/json; charset=utf-8", responseBody)
 	requestID := resp.Header.Get("x-request-id")
-	s.recordOpenAIImagesLog(ctx, c, account, parsed, requestModel, imageLogSourceChatGPT2API, requestID, startTime, results)
+	s.recordOpenAIImagesLog(ctx, c, account, parsed, requestModel, imageLogSourceChatGPT2API, requestID, startTime, results, map[string]any{
+		"route":              imageLogSourceChatGPT2API,
+		"worker_duration_ms": time.Since(workerStart).Milliseconds(),
+	})
 
 	logger.LegacyPrintf(
 		"service.openai_gateway",

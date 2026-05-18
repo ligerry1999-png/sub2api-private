@@ -188,6 +188,7 @@ func ProvideHandlers(
 	batchImageHandler *BatchImageHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
+	_ *service.ImageLogCleanupService,
 ) *Handlers {
 	return &Handlers{
 		Auth:             authHandler,
