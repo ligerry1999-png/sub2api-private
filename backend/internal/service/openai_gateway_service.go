@@ -413,6 +413,7 @@ type OpenAIGatewayService struct {
 	userPlatformQuotaRepo UserPlatformQuotaRepository
 	liveAttestation       liveattestation.Provider
 	liveAttestationCipher SecretEncryptor
+	imageLogService       *ImageLogService
 
 	openaiWSPoolOnce              sync.Once
 	openaiWSStateStoreOnce        sync.Once
@@ -517,6 +518,13 @@ func NewOpenAIGatewayService(
 	}
 	svc.logOpenAIWSModeBootstrap()
 	return svc
+}
+
+func (s *OpenAIGatewayService) SetImageLogService(imageLogService *ImageLogService) {
+	if s == nil {
+		return
+	}
+	s.imageLogService = imageLogService
 }
 
 // ResolveChannelMapping 解析渠道级模型映射（代理到 ChannelService）

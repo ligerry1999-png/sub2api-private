@@ -596,5 +596,10 @@ export default {
       }
     },
 
+    imageLogs: {
+      title: 'Image Logs',
+      description: 'View image generation records, prompts, accounts, and originals'
+    },
+
     // Ops Monitoring
 }
