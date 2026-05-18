@@ -1695,6 +1695,26 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		return nil, err
 	}
 
+	if s.openAIImagesWorkerEnabled(parsed) {
+		result, bridgeErr := s.forwardOpenAIImagesViaWorker(upstreamCtx, c, account, parsed, requestModel, token, startTime)
+		if bridgeErr == nil {
+			return result, nil
+		}
+		if !errors.Is(bridgeErr, errOpenAIImagesWorkerUnsupported) {
+			logger.LegacyPrintf(
+				"service.openai_gateway",
+				"[Warning] OpenAI images worker bridge failed; fallback=%t endpoint=%s request_model=%s error=%s",
+				s.openAIImagesWorkerFallbackEnabled(),
+				parsed.Endpoint,
+				requestModel,
+				sanitizeUpstreamErrorMessage(bridgeErr.Error()),
+			)
+		}
+		if !s.openAIImagesWorkerFallbackEnabled() {
+			return nil, bridgeErr
+		}
+	}
+
 	responsesBody, err := buildOpenAIImagesResponsesRequest(parsed, requestModel)
 	if err != nil {
 		return nil, err
