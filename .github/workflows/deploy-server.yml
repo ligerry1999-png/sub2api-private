@@ -117,7 +117,17 @@ jobs:
           docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml -f docker-compose.build.yml build sub2api
           docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml -f docker-compose.build.yml up -d sub2api
 
-          curl -fsS http://127.0.0.1:18080/health >/dev/null
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/health >/dev/null; then
+              break
+            fi
+            if [ "$attempt" = "30" ]; then
+              echo "Sub2API health check failed"
+              docker logs --tail 120 sub2api-private || true
+              exit 1
+            fi
+            sleep 2
+          done
 
           docker image prune -f >/dev/null || true
           docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml -f docker-compose.build.yml ps
