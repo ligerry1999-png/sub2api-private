@@ -333,6 +333,28 @@ const preloadImageURL = (url: string) => {
   })
 }
 
+const loadPreviewObjectURL = async (log: ImageLog, image: ImageLogImage) => {
+  let thumbnailURL = ''
+  try {
+    thumbnailURL = await adminAPI.imageLogs.getThumbnailObjectURL(log.id, image.index)
+    await preloadImageURL(thumbnailURL)
+    return thumbnailURL
+  } catch {
+    if (thumbnailURL) {
+      URL.revokeObjectURL(thumbnailURL)
+    }
+  }
+
+  const originalURL = await adminAPI.imageLogs.getImageObjectURL(log.id, image.index)
+  try {
+    await preloadImageURL(originalURL)
+    return originalURL
+  } catch (error) {
+    URL.revokeObjectURL(originalURL)
+    throw error
+  }
+}
+
 const revokeThumbnailURLs = (keepKeys = new Set<string>()) => {
   const next: Record<string, string> = {}
   for (const [key, url] of Object.entries(thumbnailURLs.value)) {
@@ -376,16 +398,7 @@ const loadThumbnails = async (items: ImageLog[]) => {
   await Promise.allSettled(
     targets.map(async ({ log, image, key }) => {
       try {
-        const url = await adminAPI.imageLogs.getThumbnailObjectURL(log.id, image.index)
-        try {
-          await preloadImageURL(url)
-        } catch {
-          URL.revokeObjectURL(url)
-          if (seq === thumbnailLoadSeq && nextKeys.has(key)) {
-            thumbnailStates.value = { ...thumbnailStates.value, [key]: 'error' }
-          }
-          return
-        }
+        const url = await loadPreviewObjectURL(log, image)
         if (seq !== thumbnailLoadSeq || !nextKeys.has(key)) {
           URL.revokeObjectURL(url)
           return
@@ -393,27 +406,6 @@ const loadThumbnails = async (items: ImageLog[]) => {
         thumbnailURLs.value = { ...thumbnailURLs.value, [key]: url }
         thumbnailStates.value = { ...thumbnailStates.value, [key]: 'ready' }
       } catch {
-        try {
-          const fallbackURL = await adminAPI.imageLogs.getImageObjectURL(log.id, image.index)
-          try {
-            await preloadImageURL(fallbackURL)
-          } catch {
-            URL.revokeObjectURL(fallbackURL)
-            if (seq === thumbnailLoadSeq && nextKeys.has(key)) {
-              thumbnailStates.value = { ...thumbnailStates.value, [key]: 'error' }
-            }
-            return
-          }
-          if (seq !== thumbnailLoadSeq || !nextKeys.has(key)) {
-            URL.revokeObjectURL(fallbackURL)
-            return
-          }
-          thumbnailURLs.value = { ...thumbnailURLs.value, [key]: fallbackURL }
-          thumbnailStates.value = { ...thumbnailStates.value, [key]: 'ready' }
-          return
-        } catch {
-          // fall through to the existing error state
-        }
         if (seq !== thumbnailLoadSeq || !nextKeys.has(key)) {
           return
         }
