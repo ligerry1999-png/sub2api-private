@@ -73,6 +73,7 @@ export async function getImageDataURL(id: number, index: number): Promise<string
   const { data } = await apiClient.get<Blob>(`/admin/image-logs/${id}/images/${index}`, {
     responseType: 'blob'
   })
+  await assertImageBlob(data)
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(String(reader.result || ''))
@@ -85,13 +86,34 @@ export async function getThumbnailObjectURL(id: number, index: number): Promise<
   const { data } = await apiClient.get<Blob>(`/admin/image-logs/${id}/thumbnails/${index}`, {
     responseType: 'blob'
   })
+  await assertImageBlob(data)
   return URL.createObjectURL(data)
+}
+
+export async function getImageObjectURL(id: number, index: number): Promise<string> {
+  const { data } = await apiClient.get<Blob>(`/admin/image-logs/${id}/images/${index}`, {
+    responseType: 'blob'
+  })
+  await assertImageBlob(data)
+  return URL.createObjectURL(data)
+}
+
+async function assertImageBlob(blob: Blob): Promise<void> {
+  if (!blob || blob.size <= 0) {
+    throw new Error('empty_image_blob')
+  }
+  const type = blob.type.toLowerCase()
+  if (type && !type.startsWith('image/')) {
+    const text = await blob.text().catch(() => '')
+    throw new Error(text || `unexpected_image_blob_type:${type}`)
+  }
 }
 
 const imageLogsAPI = {
   list,
   getImageDataURL,
-  getThumbnailObjectURL
+  getThumbnailObjectURL,
+  getImageObjectURL
 }
 
 export default imageLogsAPI
