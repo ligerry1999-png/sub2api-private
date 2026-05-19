@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"image"
+	_ "image/gif"
 	"image/jpeg"
 	_ "image/png"
 	"net/http"
@@ -197,21 +198,9 @@ func (s *ImageLogService) RecordOpenAIImages(ctx context.Context, input *RecordI
 }
 
 func (s *ImageLogService) ThumbnailDataURL(item ImageLog, img ImageLogImage) string {
-	path := strings.TrimSpace(img.ThumbnailPath)
-	mimeType := "image/jpeg"
-	if path == "" {
-		path = strings.TrimSpace(img.FilePath)
-		mimeType = strings.TrimSpace(img.MIMEType)
-	}
-	if path == "" {
-		return ""
-	}
-	data, err := os.ReadFile(s.storagePath(path))
+	data, mimeType, err := s.thumbnailBytesForImage(img)
 	if err != nil {
 		return ""
-	}
-	if mimeType == "" {
-		mimeType = http.DetectContentType(data)
 	}
 	return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data)
 }
@@ -242,18 +231,34 @@ func (s *ImageLogService) ThumbnailBytes(ctx context.Context, id int64, index in
 		if img.Index != index {
 			continue
 		}
-		path := strings.TrimSpace(img.ThumbnailPath)
-		mimeType := "image/jpeg"
-		if path == "" {
-			path = strings.TrimSpace(img.FilePath)
-			mimeType = strings.TrimSpace(img.MIMEType)
-		}
-		if path == "" {
-			return nil, "", fmt.Errorf("image thumbnail not found")
-		}
-		return s.readImageLogFile(path, mimeType)
+		return s.thumbnailBytesForImage(img)
 	}
 	return nil, "", fmt.Errorf("image index not found")
+}
+
+func (s *ImageLogService) thumbnailBytesForImage(img ImageLogImage) ([]byte, string, error) {
+	if path := strings.TrimSpace(img.ThumbnailPath); path != "" {
+		data, mimeType, err := s.readImageLogFile(path, "image/jpeg")
+		if err == nil && imageLogPayloadIsDecodable(data) {
+			return data, imageLogPayloadMIMEType("", mimeType, data), nil
+		}
+	}
+
+	if strings.TrimSpace(img.FilePath) == "" {
+		return nil, "", fmt.Errorf("image thumbnail not found")
+	}
+	original, mimeType, err := s.readImageLogFile(img.FilePath, img.MIMEType)
+	if err != nil {
+		return nil, "", err
+	}
+	thumb, _, _, err := buildImageLogThumbnail(original)
+	if err == nil {
+		return thumb, "image/jpeg", nil
+	}
+	if imageLogPayloadIsDecodable(original) {
+		return original, imageLogPayloadMIMEType("", mimeType, original), nil
+	}
+	return nil, "", fmt.Errorf("image thumbnail is not decodable")
 }
 
 func (s *ImageLogService) readImageLogFile(path string, mimeType string) ([]byte, string, error) {
@@ -278,18 +283,10 @@ func (s *ImageLogService) saveImageResults(createdAt time.Time, results []openAI
 	images := make([]ImageLogImage, 0, len(results))
 	batchID := uuid.NewString()
 	for i, result := range results {
-		b64 := strings.TrimSpace(result.Result)
-		if b64 == "" {
-			continue
-		}
-		raw, err := base64.StdEncoding.DecodeString(b64)
+		raw, mimeType, err := decodeImageLogResultPayload(result)
 		if err != nil {
 			logger.LegacyPrintf("service.image_log", "[ImageLog] skip invalid image payload index=%d err=%v", i, err)
 			continue
-		}
-		mimeType := openAIImageOutputMIMEType(result.OutputFormat)
-		if mimeType == "" || mimeType == "application/octet-stream" {
-			mimeType = http.DetectContentType(raw)
 		}
 		ext := imageLogExtension(mimeType)
 		name := fmt.Sprintf("%s_%02d%s", batchID, i, ext)
@@ -314,15 +311,27 @@ func (s *ImageLogService) saveImageResults(createdAt time.Time, results []openAI
 }
 
 func (s *ImageLogService) writeThumbnail(dayPrefix, batchID string, index int, raw []byte) (string, int, int) {
+	data, width, height, err := buildImageLogThumbnail(raw)
+	if err != nil {
+		return "", width, height
+	}
+	relPath := filepath.ToSlash(filepath.Join(dayPrefix, fmt.Sprintf("%s_%02d_thumb.jpg", batchID, index)))
+	if err := os.WriteFile(s.storagePath(relPath), data, 0o644); err != nil {
+		return "", width, height
+	}
+	return relPath, width, height
+}
+
+func buildImageLogThumbnail(raw []byte) ([]byte, int, int, error) {
 	src, _, err := image.Decode(bytes.NewReader(raw))
 	if err != nil {
-		return "", 0, 0
+		return nil, 0, 0, err
 	}
 	bounds := src.Bounds()
 	width := bounds.Dx()
 	height := bounds.Dy()
 	if width <= 0 || height <= 0 {
-		return "", 0, 0
+		return nil, width, height, fmt.Errorf("image has invalid dimensions")
 	}
 	targetW, targetH := width, height
 	if width > imageLogThumbMaxSide || height > imageLogThumbMaxSide {
@@ -339,13 +348,79 @@ func (s *ImageLogService) writeThumbnail(dayPrefix, batchID string, index int, r
 
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 78}); err != nil {
-		return "", width, height
+		return nil, width, height, err
 	}
-	relPath := filepath.ToSlash(filepath.Join(dayPrefix, fmt.Sprintf("%s_%02d_thumb.jpg", batchID, index)))
-	if err := os.WriteFile(s.storagePath(relPath), buf.Bytes(), 0o644); err != nil {
-		return "", width, height
+	return buf.Bytes(), width, height, nil
+}
+
+func decodeImageLogResultPayload(result openAIResponsesImageResult) ([]byte, string, error) {
+	payload := strings.TrimSpace(result.Result)
+	if payload == "" {
+		return nil, "", fmt.Errorf("empty image payload")
 	}
-	return relPath, width, height
+	raw, declaredMIME, err := decodeImageLogBase64Payload(payload)
+	if err != nil {
+		return nil, "", err
+	}
+	mimeType := imageLogPayloadMIMEType(result.OutputFormat, declaredMIME, raw)
+	if !imageLogIsImageMIME(mimeType) {
+		return nil, "", fmt.Errorf("decoded payload is not an image: %s", mimeType)
+	}
+	if !imageLogPayloadIsDecodable(raw) {
+		return nil, "", fmt.Errorf("decoded payload is not a supported image")
+	}
+	return raw, mimeType, nil
+}
+
+func decodeImageLogBase64Payload(payload string) ([]byte, string, error) {
+	lower := strings.ToLower(strings.TrimSpace(payload))
+	if strings.HasPrefix(lower, "data:") {
+		header, body, ok := strings.Cut(payload, ",")
+		if !ok {
+			return nil, "", fmt.Errorf("invalid image data URL")
+		}
+		mimeType := strings.TrimSpace(strings.TrimPrefix(strings.SplitN(header, ";", 2)[0], "data:"))
+		if mimeType != "" && !imageLogIsImageMIME(mimeType) {
+			return nil, "", fmt.Errorf("data URL is not an image: %s", mimeType)
+		}
+		raw, err := base64.StdEncoding.DecodeString(cleanImageLogBase64(body))
+		if err != nil {
+			return nil, "", err
+		}
+		return raw, mimeType, nil
+	}
+	raw, err := base64.StdEncoding.DecodeString(cleanImageLogBase64(payload))
+	if err != nil {
+		return nil, "", err
+	}
+	return raw, "", nil
+}
+
+func cleanImageLogBase64(value string) string {
+	replacer := strings.NewReplacer("\n", "", "\r", "", "\t", "", " ", "")
+	return replacer.Replace(strings.TrimSpace(value))
+}
+
+func imageLogPayloadMIMEType(outputFormat string, declaredMIME string, raw []byte) string {
+	if detected := http.DetectContentType(raw); imageLogIsImageMIME(detected) {
+		return strings.ToLower(strings.TrimSpace(detected))
+	}
+	if imageLogIsImageMIME(declaredMIME) {
+		return strings.ToLower(strings.TrimSpace(declaredMIME))
+	}
+	if candidate := openAIImageOutputMIMEType(outputFormat); imageLogIsImageMIME(candidate) {
+		return strings.ToLower(strings.TrimSpace(candidate))
+	}
+	return strings.ToLower(strings.TrimSpace(http.DetectContentType(raw)))
+}
+
+func imageLogIsImageMIME(mimeType string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(mimeType)), "image/")
+}
+
+func imageLogPayloadIsDecodable(raw []byte) bool {
+	_, _, err := image.DecodeConfig(bytes.NewReader(raw))
+	return err == nil
 }
 
 func (s *ImageLogService) storagePath(rel string) string {
