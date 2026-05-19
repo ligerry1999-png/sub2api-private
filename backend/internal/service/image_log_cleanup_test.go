@@ -15,9 +15,12 @@ import (
 type fakeImageLogRepository struct {
 	expired    []ImageLog
 	deletedIDs []int64
+	created    []*ImageLog
+	byID       map[int64]*ImageLog
 }
 
 func (r *fakeImageLogRepository) Create(ctx context.Context, item *ImageLog) error {
+	r.created = append(r.created, item)
 	return nil
 }
 
@@ -26,6 +29,11 @@ func (r *fakeImageLogRepository) List(ctx context.Context, params pagination.Pag
 }
 
 func (r *fakeImageLogRepository) GetByID(ctx context.Context, id int64) (*ImageLog, error) {
+	if r.byID != nil {
+		if item, ok := r.byID[id]; ok {
+			return item, nil
+		}
+	}
 	return nil, nil
 }
 
