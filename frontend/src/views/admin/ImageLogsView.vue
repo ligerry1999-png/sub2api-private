@@ -285,11 +285,12 @@ const imageKey = (log: ImageLog, image?: ImageLogImage) => {
 const thumbnailSrc = (log: ImageLog | null, image?: ImageLogImage) => {
   if (!log || !image) return ''
   const key = imageKey(log, image)
-  return thumbnailURLs.value[key] || image.thumbnail_data_url || ''
+  return image.thumbnail_data_url || thumbnailURLs.value[key] || ''
 }
 
 const thumbnailVisible = (log: ImageLog | null, image?: ImageLogImage) => {
   if (!log || !image) return false
+  if (image.thumbnail_data_url) return true
   const key = imageKey(log, image)
   const state = thumbnailStates.value[key]
   return state === 'ready' && Boolean(thumbnailSrc(log, image))
@@ -383,7 +384,7 @@ const loadThumbnails = async (items: ImageLog[]) => {
       const key = imageKey(log, image)
       if (!key) continue
       nextKeys.add(key)
-      if (!thumbnailURLs.value[key]) {
+      if (!image.thumbnail_data_url && !thumbnailURLs.value[key]) {
         targets.push({ log, image, key })
       }
     }

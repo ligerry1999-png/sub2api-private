@@ -32,12 +32,13 @@ type imageLogPersonDTO struct {
 }
 
 type imageLogImageDTO struct {
-	Index        int    `json:"index"`
-	MIMEType     string `json:"mime_type"`
-	ThumbnailURL string `json:"thumbnail_url,omitempty"`
-	SizeBytes    int64  `json:"size_bytes"`
-	Width        int    `json:"width,omitempty"`
-	Height       int    `json:"height,omitempty"`
+	Index            int    `json:"index"`
+	MIMEType         string `json:"mime_type"`
+	ThumbnailURL     string `json:"thumbnail_url,omitempty"`
+	ThumbnailDataURL string `json:"thumbnail_data_url,omitempty"`
+	SizeBytes        int64  `json:"size_bytes"`
+	Width            int    `json:"width,omitempty"`
+	Height           int    `json:"height,omitempty"`
 }
 
 type imageLogDTO struct {
@@ -145,12 +146,13 @@ func (h *ImageLogHandler) toDTO(item service.ImageLog) imageLogDTO {
 	images := make([]imageLogImageDTO, 0, len(item.Images))
 	for _, img := range item.Images {
 		images = append(images, imageLogImageDTO{
-			Index:        img.Index,
-			MIMEType:     img.MIMEType,
-			ThumbnailURL: fmt.Sprintf("/admin/image-logs/%d/thumbnails/%d", item.ID, img.Index),
-			SizeBytes:    img.SizeBytes,
-			Width:        img.Width,
-			Height:       img.Height,
+			Index:            img.Index,
+			MIMEType:         img.MIMEType,
+			ThumbnailURL:     fmt.Sprintf("/admin/image-logs/%d/thumbnails/%d", item.ID, img.Index),
+			ThumbnailDataURL: h.imageLogService.ThumbnailDataURL(item, img),
+			SizeBytes:        img.SizeBytes,
+			Width:            img.Width,
+			Height:           img.Height,
 		})
 	}
 	out := imageLogDTO{
