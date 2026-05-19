@@ -393,6 +393,27 @@ const loadThumbnails = async (items: ImageLog[]) => {
         thumbnailURLs.value = { ...thumbnailURLs.value, [key]: url }
         thumbnailStates.value = { ...thumbnailStates.value, [key]: 'ready' }
       } catch {
+        try {
+          const fallbackURL = await adminAPI.imageLogs.getImageObjectURL(log.id, image.index)
+          try {
+            await preloadImageURL(fallbackURL)
+          } catch {
+            URL.revokeObjectURL(fallbackURL)
+            if (seq === thumbnailLoadSeq && nextKeys.has(key)) {
+              thumbnailStates.value = { ...thumbnailStates.value, [key]: 'error' }
+            }
+            return
+          }
+          if (seq !== thumbnailLoadSeq || !nextKeys.has(key)) {
+            URL.revokeObjectURL(fallbackURL)
+            return
+          }
+          thumbnailURLs.value = { ...thumbnailURLs.value, [key]: fallbackURL }
+          thumbnailStates.value = { ...thumbnailStates.value, [key]: 'ready' }
+          return
+        } catch {
+          // fall through to the existing error state
+        }
         if (seq !== thumbnailLoadSeq || !nextKeys.has(key)) {
           return
         }

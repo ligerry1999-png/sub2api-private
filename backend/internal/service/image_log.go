@@ -288,23 +288,31 @@ func (s *ImageLogService) saveImageResults(createdAt time.Time, results []openAI
 			logger.LegacyPrintf("service.image_log", "[ImageLog] skip invalid image payload index=%d err=%v", i, err)
 			continue
 		}
+		thumbData, width, height, err := buildImageLogThumbnail(raw)
+		if err != nil {
+			logger.LegacyPrintf("service.image_log", "[ImageLog] skip undecodable image payload index=%d err=%v", i, err)
+			continue
+		}
 		ext := imageLogExtension(mimeType)
 		name := fmt.Sprintf("%s_%02d%s", batchID, i, ext)
 		relPath := filepath.ToSlash(filepath.Join(dayPrefix, name))
 		if err := os.WriteFile(s.storagePath(relPath), raw, 0o644); err != nil {
 			return nil, err
 		}
+		thumbRel := filepath.ToSlash(filepath.Join(dayPrefix, fmt.Sprintf("%s_%02d_thumb.jpg", batchID, i)))
+		if err := os.WriteFile(s.storagePath(thumbRel), thumbData, 0o644); err != nil {
+			return nil, err
+		}
 
 		logImage := ImageLogImage{
-			Index:     i,
-			MIMEType:  mimeType,
-			FilePath:  relPath,
-			SizeBytes: int64(len(raw)),
+			Index:         i,
+			MIMEType:      mimeType,
+			FilePath:      relPath,
+			ThumbnailPath: thumbRel,
+			SizeBytes:     int64(len(raw)),
+			Width:         width,
+			Height:        height,
 		}
-		thumbRel, width, height := s.writeThumbnail(dayPrefix, batchID, i, raw)
-		logImage.ThumbnailPath = thumbRel
-		logImage.Width = width
-		logImage.Height = height
 		images = append(images, logImage)
 	}
 	return images, nil
@@ -419,7 +427,7 @@ func imageLogIsImageMIME(mimeType string) bool {
 }
 
 func imageLogPayloadIsDecodable(raw []byte) bool {
-	_, _, err := image.DecodeConfig(bytes.NewReader(raw))
+	_, _, err := image.Decode(bytes.NewReader(raw))
 	return err == nil
 }
 
