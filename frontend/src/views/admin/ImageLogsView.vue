@@ -52,10 +52,11 @@
               @click="openPreview(log, log.images[0])"
             >
               <img
-                v-if="thumbnailReady(log, log.images[0])"
+                v-if="thumbnailVisible(log, log.images[0])"
                 :src="thumbnailSrc(log, log.images[0])"
                 alt=""
                 class="h-full w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+                @error="handleThumbnailError(log, log.images[0])"
               />
               <div v-else class="flex h-full w-full items-center justify-center px-3 text-center text-sm text-gray-400">
                 {{ thumbnailPlaceholder(log, log.images[0]) }}
@@ -171,10 +172,11 @@
             @click="openPreview(selectedLog, img)"
           >
             <img
-              v-if="thumbnailReady(selectedLog, img)"
+              v-if="thumbnailVisible(selectedLog, img)"
               :src="thumbnailSrc(selectedLog, img)"
               class="h-full w-full object-cover"
               alt=""
+              @error="handleThumbnailError(selectedLog, img)"
             />
             <div v-else class="flex h-full w-full items-center justify-center px-2 text-center text-xs text-gray-400">
               {{ thumbnailPlaceholder(selectedLog, img) }}
@@ -212,7 +214,8 @@ const previewDataURL = ref('')
 const selectedLog = ref<ImageLog | null>(null)
 const selectedImage = ref<ImageLogImage | null>(null)
 const thumbnailURLs = ref<Record<string, string>>({})
-const thumbnailStates = ref<Record<string, 'loading' | 'ready' | 'error'>>({})
+type ThumbnailState = 'loading' | 'ready' | 'error'
+const thumbnailStates = ref<Record<string, ThumbnailState>>({})
 let abortController: AbortController | null = null
 let thumbnailLoadSeq = 0
 
@@ -285,10 +288,11 @@ const thumbnailSrc = (log: ImageLog | null, image?: ImageLogImage) => {
   return thumbnailURLs.value[key] || image.thumbnail_data_url || ''
 }
 
-const thumbnailReady = (log: ImageLog | null, image?: ImageLogImage) => {
+const thumbnailVisible = (log: ImageLog | null, image?: ImageLogImage) => {
   if (!log || !image) return false
   const key = imageKey(log, image)
-  return thumbnailStates.value[key] === 'ready' && Boolean(thumbnailSrc(log, image))
+  const state = thumbnailStates.value[key]
+  return state === 'ready' && Boolean(thumbnailSrc(log, image))
 }
 
 const thumbnailPlaceholder = (log: ImageLog | null, image?: ImageLogImage) => {
@@ -297,6 +301,36 @@ const thumbnailPlaceholder = (log: ImageLog | null, image?: ImageLogImage) => {
   if (state === 'loading') return '加载中'
   if (state === 'error') return '图片加载失败'
   return '无缩略图'
+}
+
+const markThumbnailState = (log: ImageLog | null, image: ImageLogImage | undefined, state: ThumbnailState) => {
+  if (!log || !image) return
+  const key = imageKey(log, image)
+  if (!key) return
+  thumbnailStates.value = { ...thumbnailStates.value, [key]: state }
+}
+
+const handleThumbnailError = (log: ImageLog | null, image?: ImageLogImage) => {
+  if (log && image) {
+    const key = imageKey(log, image)
+    const url = thumbnailURLs.value[key]
+    if (url) {
+      URL.revokeObjectURL(url)
+      const next = { ...thumbnailURLs.value }
+      delete next[key]
+      thumbnailURLs.value = next
+    }
+  }
+  markThumbnailState(log, image, 'error')
+}
+
+const preloadImageURL = (url: string) => {
+  return new Promise<void>((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve()
+    image.onerror = () => reject(new Error('thumbnail_decode_failed'))
+    image.src = url
+  })
 }
 
 const revokeThumbnailURLs = (keepKeys = new Set<string>()) => {
@@ -309,7 +343,7 @@ const revokeThumbnailURLs = (keepKeys = new Set<string>()) => {
     URL.revokeObjectURL(url)
   }
   thumbnailURLs.value = next
-  const nextStates: Record<string, 'loading' | 'ready' | 'error'> = {}
+  const nextStates: Record<string, ThumbnailState> = {}
   for (const [key, state] of Object.entries(thumbnailStates.value)) {
     if (keepKeys.has(key)) {
       nextStates[key] = state
@@ -343,6 +377,15 @@ const loadThumbnails = async (items: ImageLog[]) => {
     targets.map(async ({ log, image, key }) => {
       try {
         const url = await adminAPI.imageLogs.getThumbnailObjectURL(log.id, image.index)
+        try {
+          await preloadImageURL(url)
+        } catch {
+          URL.revokeObjectURL(url)
+          if (seq === thumbnailLoadSeq && nextKeys.has(key)) {
+            thumbnailStates.value = { ...thumbnailStates.value, [key]: 'error' }
+          }
+          return
+        }
         if (seq !== thumbnailLoadSeq || !nextKeys.has(key)) {
           URL.revokeObjectURL(url)
           return
