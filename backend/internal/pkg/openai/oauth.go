@@ -381,7 +381,7 @@ type UserInfo struct {
 	UserID           string
 	OrganizationID   string
 	OrganizationTitle string
-	Organizations    []OrganizationClaim
+	Organizations     []OrganizationClaim
 }
 
 // GetUserInfo extracts user info from ID Token claims
