@@ -102,7 +102,7 @@ func (r *imageLogRepository) List(ctx context.Context, params pagination.Paginat
 	if err != nil {
 		return nil, nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	items := make([]service.ImageLog, 0, limit)
 	for rows.Next() {
@@ -145,7 +145,7 @@ func (r *imageLogRepository) GetByID(ctx context.Context, id int64) (*service.Im
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	if !rows.Next() {
 		return nil, sql.ErrNoRows
 	}
@@ -170,7 +170,7 @@ func (r *imageLogRepository) ListExpired(ctx context.Context, cutoff time.Time, 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	items := make([]service.ImageLog, 0, limit)
 	for rows.Next() {

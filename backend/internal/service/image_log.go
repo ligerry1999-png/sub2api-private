@@ -318,18 +318,6 @@ func (s *ImageLogService) saveImageResults(createdAt time.Time, results []openAI
 	return images, nil
 }
 
-func (s *ImageLogService) writeThumbnail(dayPrefix, batchID string, index int, raw []byte) (string, int, int) {
-	data, width, height, err := buildImageLogThumbnail(raw)
-	if err != nil {
-		return "", width, height
-	}
-	relPath := filepath.ToSlash(filepath.Join(dayPrefix, fmt.Sprintf("%s_%02d_thumb.jpg", batchID, index)))
-	if err := os.WriteFile(s.storagePath(relPath), data, 0o644); err != nil {
-		return "", width, height
-	}
-	return relPath, width, height
-}
-
 func buildImageLogThumbnail(raw []byte) ([]byte, int, int, error) {
 	src, _, err := image.Decode(bytes.NewReader(raw))
 	if err != nil {

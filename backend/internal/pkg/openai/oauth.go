@@ -380,7 +380,8 @@ type UserInfo struct {
 	PlanType         string
 	UserID           string
 	OrganizationID   string
-	Organizations    []OrganizationClaim
+	OrganizationTitle string
+	Organizations     []OrganizationClaim
 }
 
 // GetUserInfo extracts user info from ID Token claims
