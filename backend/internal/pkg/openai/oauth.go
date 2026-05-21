@@ -374,12 +374,12 @@ func ParseIDToken(idToken string) (*IDTokenClaims, error) {
 
 // UserInfo represents user information extracted from ID Token claims.
 type UserInfo struct {
-	Email            string
-	ChatGPTAccountID string
-	ChatGPTUserID    string
-	PlanType         string
-	UserID           string
-	OrganizationID   string
+	Email             string
+	ChatGPTAccountID  string
+	ChatGPTUserID     string
+	PlanType          string
+	UserID            string
+	OrganizationID    string
 	OrganizationTitle string
 	Organizations     []OrganizationClaim
 }
