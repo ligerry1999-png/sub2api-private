@@ -235,13 +235,15 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesViaWorker(
 		len(results),
 	)
 	return &OpenAIForwardResult{
-		RequestID:       requestID,
-		Model:           requestModel,
-		UpstreamModel:   requestModel,
-		Stream:          false,
-		ResponseHeaders: resp.Header.Clone(),
-		Duration:        time.Since(startTime),
-		ImageCount:      len(results),
-		ImageSize:       parsed.SizeTier,
+		RequestID:        requestID,
+		Model:            requestModel,
+		UpstreamModel:    requestModel,
+		Stream:           false,
+		ResponseHeaders:  resp.Header.Clone(),
+		Duration:         time.Since(startTime),
+		ImageCount:       len(results),
+		ImageSize:        parsed.SizeTier,
+		ImageInputSize:   parsed.Size,
+		ImageOutputSizes: openAIResponsesImageResultSizes(results),
 	}, nil
 }
