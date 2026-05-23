@@ -16,6 +16,7 @@ func RegisterAdminRoutes(
 ) {
 	admin := v1.Group("/admin")
 	admin.Use(gin.HandlerFunc(adminAuth))
+	admin.Use(middleware.AdminRoleAccess())
 	{
 		// 仪表盘
 		registerDashboardRoutes(admin, h)

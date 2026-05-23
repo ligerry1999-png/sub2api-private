@@ -66,6 +66,14 @@ func (u *User) IsAdmin() bool {
 	return u.Role == RoleAdmin
 }
 
+func (u *User) IsAccountManager() bool {
+	return u.Role == RoleAccountManager
+}
+
+func (u *User) CanAccessAdminArea() bool {
+	return u.IsAdmin() || u.IsAccountManager()
+}
+
 func (u *User) IsActive() bool {
 	return u.Status == StatusActive
 }
