@@ -8,6 +8,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -96,7 +97,14 @@ func (h *ProxyHandler) GetAll(c *gin.Context) {
 		}
 		out := make([]dto.AdminProxyWithAccountCount, 0, len(proxies))
 		for i := range proxies {
-			out = append(out, *dto.ProxyWithAccountCountFromServiceAdmin(&proxies[i]))
+			if isAccountManagerRequest(c) {
+				out = append(out, dto.AdminProxyWithAccountCount{
+					AdminProxy:  dto.AdminProxy{Proxy: *dto.ProxyFromService(&proxies[i].Proxy)},
+					AccountCount: proxies[i].AccountCount,
+				})
+			} else {
+				out = append(out, *dto.ProxyWithAccountCountFromServiceAdmin(&proxies[i]))
+			}
 		}
 		response.Success(c, out)
 		return
@@ -110,9 +118,18 @@ func (h *ProxyHandler) GetAll(c *gin.Context) {
 
 	out := make([]dto.AdminProxy, 0, len(proxies))
 	for i := range proxies {
-		out = append(out, *dto.ProxyFromServiceAdmin(&proxies[i]))
+		if isAccountManagerRequest(c) {
+			out = append(out, dto.AdminProxy{Proxy: *dto.ProxyFromService(&proxies[i])})
+		} else {
+			out = append(out, *dto.ProxyFromServiceAdmin(&proxies[i]))
+		}
 	}
 	response.Success(c, out)
+}
+
+func isAccountManagerRequest(c *gin.Context) bool {
+	role, ok := middleware.GetUserRoleFromContext(c)
+	return ok && role == service.RoleAccountManager
 }
 
 // GetByID handles getting a proxy by ID

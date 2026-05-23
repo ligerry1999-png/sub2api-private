@@ -60,7 +60,7 @@ type CreateUserRequest struct {
 	Password      string   `json:"password" binding:"required,min=6"`
 	Username      string   `json:"username"`
 	Notes         string   `json:"notes"`
-	Role          string   `json:"role" binding:"omitempty,oneof=admin user"`
+	Role          string   `json:"role" binding:"omitempty,oneof=admin account_manager user"`
 	Balance       *float64 `json:"balance"`
 	Concurrency   int      `json:"concurrency"`
 	RPMLimit      int      `json:"rpm_limit"`
@@ -74,7 +74,7 @@ type UpdateUserRequest struct {
 	Password      string   `json:"password" binding:"omitempty,min=6"`
 	Username      *string  `json:"username"`
 	Notes         *string  `json:"notes"`
-	Role          string   `json:"role" binding:"omitempty,oneof=admin user"`
+	Role          string   `json:"role" binding:"omitempty,oneof=admin account_manager user"`
 	Balance       *float64 `json:"balance"`
 	Concurrency   *int     `json:"concurrency"`
 	RPMLimit      *int     `json:"rpm_limit"`
@@ -317,7 +317,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 
 	// 防锁死保护：管理员不能把自己降级为普通用户(单管理员场景下会失去后台访问权)。
 	// 与既有"不能禁用/删除 admin"保护一致。降级其他管理员仍然允许。
-	if req.Role == service.RoleUser && userID == getAdminIDFromContext(c) {
+	if req.Role != "" && req.Role != service.RoleAdmin && userID == getAdminIDFromContext(c) {
 		response.BadRequest(c, "cannot demote yourself from admin")
 		return
 	}
