@@ -90,7 +90,9 @@ func (h *ProxyHandler) GetAll(c *gin.Context) {
 		for i := range proxies {
 			if isAccountManagerRequest(c) {
 				out = append(out, dto.AdminProxyWithAccountCount{
-					AdminProxy:  dto.AdminProxy{Proxy: *dto.ProxyFromService(&proxies[i].Proxy)},
+					AdminProxy: dto.AdminProxy{
+						Proxy: *dto.ProxyFromService(&proxies[i].Proxy),
+					},
 					AccountCount: proxies[i].AccountCount,
 				})
 			} else {
