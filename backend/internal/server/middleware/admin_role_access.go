@@ -51,7 +51,7 @@ func isAccountManagerAllowedAdminRequest(method, path string) bool {
 	switch {
 	case adminPath == "/accounts" || strings.HasPrefix(adminPath, "/accounts/"):
 		// Import is allowed; export is not, because it can expose the whole account pool.
-		return !(method == http.MethodGet && adminPath == "/accounts/data")
+		return method != http.MethodGet || adminPath != "/accounts/data"
 	case method == http.MethodGet && adminPath == "/groups/all":
 		return true
 	case method == http.MethodGet && adminPath == "/proxies/all":
