@@ -389,7 +389,10 @@ const routes: RouteRecordRaw[] = [
   // ==================== Admin Routes ====================
   {
     path: '/admin',
-    redirect: '/admin/dashboard'
+    redirect: () => {
+      const authStore = useAuthStore()
+      return authStore.isAccountManager && !authStore.isAdmin ? '/admin/accounts' : '/admin/dashboard'
+    }
   },
   {
     path: '/admin/dashboard',
@@ -508,7 +511,8 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/admin/AccountsView.vue'),
     meta: {
       requiresAuth: true,
-      requiresAdmin: true,
+      requiresAdmin: false,
+      requiresAccountManager: true,
       title: 'Account Management',
       titleKey: 'admin.accounts.title',
       descriptionKey: 'admin.accounts.description'
@@ -768,6 +772,12 @@ function isBackendModePublicRouteAllowed(path: string, hasPendingAuthSession: bo
   return false
 }
 
+function resolveAuthenticatedHomePath(authStore: ReturnType<typeof useAuthStore>): string {
+  if (authStore.isAdmin) return '/admin/dashboard'
+  if (authStore.isAccountManager) return '/admin/accounts'
+  return '/dashboard'
+}
+
 router.beforeEach(async (to, _from, next) => {
   // 开始导航加载状态
   navigationLoading.startNavigation()
@@ -792,12 +802,13 @@ router.beforeEach(async (to, _from, next) => {
   // Check if route requires authentication
   const requiresAuth = to.meta.requiresAuth !== false // Default to true
   const requiresAdmin = to.meta.requiresAdmin === true
+  const requiresAccountManager = to.meta.requiresAccountManager === true
 
   if (to.path === '/setup') {
     try {
       const status = await getSetupStatus()
       if (!status.needs_setup) {
-        next(resolveCompletedSetupRedirectPath(authStore.isAuthenticated, authStore.isAdmin))
+        next(resolveCompletedSetupRedirectPath(authStore.isAuthenticated, authStore.isAdmin, authStore.isAccountManager))
         return
       }
     } catch {
@@ -811,12 +822,11 @@ router.beforeEach(async (to, _from, next) => {
     if (authStore.isAuthenticated && (to.path === '/login' || to.path === '/register')) {
       // In backend mode, non-admin users should NOT be redirected away from login
       // (they are blocked from all protected routes, so redirecting would cause a loop)
-      if (appStore.backendModeEnabled && !authStore.isAdmin) {
+      if (appStore.backendModeEnabled && !authStore.canAccessAdminArea) {
         next()
         return
       }
-      // Admin users go to admin dashboard, regular users go to user dashboard
-      next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
+      next(resolveAuthenticatedHomePath(authStore))
       return
     }
     // Backend mode: block public pages for unauthenticated users (except login, key-usage, setup)
@@ -844,6 +854,11 @@ router.beforeEach(async (to, _from, next) => {
   // Check admin requirement
   if (requiresAdmin && !authStore.isAdmin) {
     // User is authenticated but not admin, redirect to user dashboard
+    next(resolveAuthenticatedHomePath(authStore))
+    return
+  }
+
+  if (requiresAccountManager && !authStore.canAccessAdminArea) {
     next('/dashboard')
     return
   }
@@ -862,6 +877,10 @@ router.beforeEach(async (to, _from, next) => {
     }
   }
 
+  if (authStore.isAccountManager && !authStore.isAdmin && !requiresAccountManager) {
+    next('/admin/accounts')
+    return
+  }
 
   // 公共设置可能尚未加载（App.vue 的 onMounted 异步拉取晚于首次导航，且纯静态部署
   // 无 __APP_CONFIG__ 注入）。此时 cachedPublicSettings 为空会把 payment/risk_control
@@ -906,14 +925,18 @@ router.beforeEach(async (to, _from, next) => {
 
     if (restrictedPaths.some((path) => to.path.startsWith(path))) {
       // 简易模式下访问受限页面,重定向到仪表板
-      next(authStore.isAdmin ? '/admin/dashboard' : '/dashboard')
+      next(resolveAuthenticatedHomePath(authStore))
       return
     }
   }
 
-  // Backend mode: admin gets full access, non-admin blocked
+  // Backend mode: full admins get full access; account managers get scoped admin routes.
   if (appStore.backendModeEnabled) {
     if (authStore.isAuthenticated && authStore.isAdmin) {
+      next()
+      return
+    }
+    if (authStore.isAuthenticated && authStore.isAccountManager && requiresAccountManager) {
       next()
       return
     }
