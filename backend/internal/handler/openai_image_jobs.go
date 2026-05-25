@@ -289,7 +289,9 @@ func (h *OpenAIGatewayHandler) forwardImageJob(endpoint string, body []byte, hea
 	if err != nil {
 		return openAIImageJobResult{err: err}
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 
 	limit := openAIImageJobResultReadLimit(h.cfg)
 	respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, limit+1))
@@ -416,7 +418,7 @@ func (s *openAIImageJobStore) get(jobID string) (*openAIImageJob, bool) {
 }
 
 func (s *openAIImageJobStore) markRunning(jobID string, started time.Time) {
-	s.update(jobID, func(job *openAIImageJob) {
+	_ = s.update(jobID, func(job *openAIImageJob) {
 		job.Status = openAIImageJobStatusRunning
 		job.StartedAt = &started
 		job.UpdatedAt = started
@@ -424,7 +426,7 @@ func (s *openAIImageJobStore) markRunning(jobID string, started time.Time) {
 }
 
 func (s *openAIImageJobStore) markFailed(jobID string, finished time.Time, statusCode int, message string) {
-	s.update(jobID, func(job *openAIImageJob) {
+	_ = s.update(jobID, func(job *openAIImageJob) {
 		job.Status = openAIImageJobStatusFailed
 		job.Error = truncateImageJobError(message)
 		job.HTTPStatus = statusCode
