@@ -143,6 +143,37 @@ func TestGatewayRoutesAsyncImagesPathsAreRegistered(t *testing.T) {
 	}
 }
 
+func TestGatewayRoutesOpenAIImageJobPathsAreRegistered(t *testing.T) {
+	router := newGatewayRoutesTestRouter()
+
+	for _, path := range []string{
+		"/v1/image-jobs/images/generations",
+		"/v1/image-jobs/images/edits",
+		"/image-jobs/images/generations",
+		"/image-jobs/images/edits",
+	} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"gpt-image-2","prompt":"draw a cat"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+		require.NotEqual(t, http.StatusNotFound, w.Code, "path=%s should hit OpenAI image job handler", path)
+	}
+
+	for _, path := range []string{
+		"/v1/image-jobs/imgjob_test",
+		"/v1/image-jobs/imgjob_test/result",
+		"/image-jobs/imgjob_test",
+		"/image-jobs/imgjob_test/result",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, strings.NewReader(""))
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+		require.Contains(t, w.Body.String(), "Image job not found", "path=%s should hit OpenAI image job handler", path)
+	}
+}
+
 func TestGatewayRoutesGrokImagesAndVideosPathsAreRegistered(t *testing.T) {
 	router := newGatewayRoutesTestRouter(service.PlatformGrok)
 
