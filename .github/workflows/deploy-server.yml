@@ -45,13 +45,22 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
 
+      - name: Build Docker image
+        run: |
+          set -euo pipefail
+          IMAGE_BUNDLE="/tmp/sub2api-image-${GITHUB_SHA}.tar.gz"
+          docker build -t sub2api:private-prod .
+          docker save sub2api:private-prod | gzip > "$IMAGE_BUNDLE"
+
       - name: Upload release bundle
         run: |
           set -euo pipefail
           DEPLOY_PORT="${DEPLOY_PORT:-22}"
           BUNDLE="/tmp/sub2api-release-${GITHUB_SHA}.tgz"
+          IMAGE_BUNDLE="/tmp/sub2api-image-${GITHUB_SHA}.tar.gz"
           tar --exclude='.git' -czf "$BUNDLE" .
           scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" "$BUNDLE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/sub2api-release.tgz"
+          scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" "$IMAGE_BUNDLE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/sub2api-image.tgz"
           ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
             -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" <<'REMOTE'
           set -euo pipefail
@@ -118,10 +127,11 @@ jobs:
           upsert_env "$RUNTIME_DIR/.env" "GATEWAY_IMAGE_WORKER_TIMEOUT_SECONDS" "1200"
 
           cd "$DEPLOY_DIR"
-          echo "Building Sub2API image..."
-          docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml -f docker-compose.build.yml build sub2api
+          echo "Loading Sub2API image..."
+          docker load -i /tmp/sub2api-image.tgz
+          rm -f /tmp/sub2api-image.tgz
           echo "Starting Sub2API container..."
-          docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml -f docker-compose.build.yml up -d sub2api
+          docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml up -d sub2api
 
           if command -v nginx >/dev/null 2>&1; then
             cp "$DEPLOY_DIR/nginx-sub2api-prod.conf" /etc/nginx/sites-available/sub2api
@@ -146,5 +156,5 @@ jobs:
 
           echo "Sub2API health check passed"
           docker image prune -f >/dev/null || true
-          docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml -f docker-compose.build.yml ps
+          docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml ps
           REMOTE
