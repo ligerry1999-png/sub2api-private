@@ -52,7 +52,8 @@ jobs:
           BUNDLE="/tmp/sub2api-release-${GITHUB_SHA}.tgz"
           tar --exclude='.git' -czf "$BUNDLE" .
           scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" "$BUNDLE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/sub2api-release.tgz"
-          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" <<'REMOTE'
+          ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+            -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" <<'REMOTE'
           set -euo pipefail
           RELEASE_DIR="/opt/sub2api-release"
           NEXT_DIR="/opt/sub2api-release.next"
@@ -76,8 +77,9 @@ jobs:
           DEPLOY_PORT="${DEPLOY_PORT:-22}"
           BRIDGE_KEY_B64="$(printf '%s' "$CHATGPT2API_INTERNAL_BRIDGE_KEY" | base64 -w 0)"
 
-          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
-            "BRIDGE_KEY_B64='$BRIDGE_KEY_B64' bash -s" <<'REMOTE'
+          ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+            -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "BRIDGE_KEY_B64='$BRIDGE_KEY_B64' timeout 45m bash -s" <<'REMOTE'
           set -euo pipefail
 
           REPO_DIR="/opt/sub2api-release"
@@ -116,7 +118,9 @@ jobs:
           upsert_env "$RUNTIME_DIR/.env" "GATEWAY_IMAGE_WORKER_TIMEOUT_SECONDS" "1200"
 
           cd "$DEPLOY_DIR"
+          echo "Building Sub2API image..."
           docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml -f docker-compose.build.yml build sub2api
+          echo "Starting Sub2API container..."
           docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml -f docker-compose.build.yml up -d sub2api
 
           if command -v nginx >/dev/null 2>&1; then
@@ -140,6 +144,7 @@ jobs:
             sleep 2
           done
 
+          echo "Sub2API health check passed"
           docker image prune -f >/dev/null || true
           docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml -f docker-compose.build.yml ps
           REMOTE
