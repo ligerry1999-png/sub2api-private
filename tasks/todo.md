@@ -25,9 +25,9 @@
 
 - [x] 确认线上新版镜像缺少 `/v1/image-jobs/*` 路由，导致本地脚本提交异步生图任务 404
 - [x] 从历史定制分支恢复 Image Jobs handler、路由和路由注册测试
-- [ ] 本地轻量验证路由测试通过
-- [ ] GitHub Actions build-only 验证通过
-- [ ] 手动 deploy=true 部署并确认线上异步路由恢复
+- [x] 本地轻量验证路由测试通过
+- [x] GitHub Actions build-only 验证通过
+- [x] 手动 deploy=true 部署并确认线上异步路由恢复
 
 ## 验证记录
 
