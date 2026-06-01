@@ -12,6 +12,15 @@
 - [x] 补充生产日志中的阶段耗时观察，确认慢请求主要落在 ChatGPT2API 网关还是 Sub2API 原生兜底
 - [ ] 修复 GitHub Actions 里 frontend 依赖安装的失败项，让 CI 全绿
 
+## 安全升级计划
+
+- [x] 取消会压垮服务器的本机 Docker build 部署任务
+- [x] 临时禁用 Deploy Server workflow，避免误触发自动部署
+- [x] 改造部署流程：GitHub Actions 构建镜像，服务器只执行 docker load 和 compose up
+- [x] 改造部署触发方式：只允许手动触发，默认只构建不部署
+- [ ] 推送到 main 后先跑一次 build-only 验证
+- [ ] 验证通过后再手动选择 deploy=true 执行升级
+
 ## 验证记录
 
 - [x] 前端生产构建通过，`ImageLogsView` 已打进前端产物
@@ -19,3 +28,4 @@
 - [x] 本轮前端 `npm run typecheck` 和 `npm run build` 通过
 - [x] 本轮 Go 关键包测试通过：`./internal/service`、`./internal/handler/admin`、`./internal/repository`、`./cmd/server`
 - [x] `git diff --check` 通过
+- [x] 硬重启后线上旧容器恢复健康：Sub2API/Postgres/Redis 均 healthy，内部 `/health` 正常

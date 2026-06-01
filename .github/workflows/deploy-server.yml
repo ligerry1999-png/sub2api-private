@@ -1,10 +1,13 @@
 name: Deploy Server
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Load the image on the server and restart Sub2API"
+        required: true
+        default: false
+        type: boolean
 
 concurrency:
   group: sub2api-server-deploy
@@ -29,6 +32,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Validate deploy secrets
+        if: ${{ inputs.deploy == true }}
         run: |
           set -euo pipefail
           test -n "$DEPLOY_HOST" || { echo "DEPLOY_HOST is required"; exit 1; }
@@ -37,6 +41,7 @@ jobs:
           test -n "$CHATGPT2API_INTERNAL_BRIDGE_KEY" || { echo "CHATGPT2API_INTERNAL_BRIDGE_KEY is required"; exit 1; }
 
       - name: Configure SSH
+        if: ${{ inputs.deploy == true }}
         run: |
           set -euo pipefail
           DEPLOY_PORT="${DEPLOY_PORT:-22}"
@@ -53,14 +58,17 @@ jobs:
           docker save sub2api:private-prod | gzip > "$IMAGE_BUNDLE"
 
       - name: Upload release bundle
+        if: ${{ inputs.deploy == true }}
         run: |
           set -euo pipefail
           DEPLOY_PORT="${DEPLOY_PORT:-22}"
           BUNDLE="/tmp/sub2api-release-${GITHUB_SHA}.tgz"
           IMAGE_BUNDLE="/tmp/sub2api-image-${GITHUB_SHA}.tar.gz"
           tar --exclude='.git' -czf "$BUNDLE" .
-          scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" "$BUNDLE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/sub2api-release.tgz"
-          scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" "$IMAGE_BUNDLE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/sub2api-image.tgz"
+          scp -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+            -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" "$BUNDLE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/sub2api-release.tgz"
+          scp -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+            -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" "$IMAGE_BUNDLE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/sub2api-image.tgz"
           ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
             -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" <<'REMOTE'
           set -euo pipefail
@@ -81,6 +89,7 @@ jobs:
           REMOTE
 
       - name: Deploy Sub2API
+        if: ${{ inputs.deploy == true }}
         run: |
           set -euo pipefail
           DEPLOY_PORT="${DEPLOY_PORT:-22}"
@@ -88,7 +97,7 @@ jobs:
 
           ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
             -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
-            "BRIDGE_KEY_B64='$BRIDGE_KEY_B64' timeout 45m bash -s" <<'REMOTE'
+            "BRIDGE_KEY_B64='$BRIDGE_KEY_B64' timeout 15m bash -s" <<'REMOTE'
           set -euo pipefail
 
           REPO_DIR="/opt/sub2api-release"
