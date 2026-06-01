@@ -134,6 +134,39 @@ jobs:
           upsert_env "$RUNTIME_DIR/.env" "GATEWAY_RESPONSE_HEADER_TIMEOUT" "1200"
           upsert_env "$RUNTIME_DIR/.env" "GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT" "0"
           upsert_env "$RUNTIME_DIR/.env" "GATEWAY_IMAGE_WORKER_TIMEOUT_SECONDS" "1200"
+          upsert_env "$RUNTIME_DIR/.env" "IMAGE_LOGS_CLEANUP_ENABLED" "true"
+          upsert_env "$RUNTIME_DIR/.env" "IMAGE_LOGS_RETENTION_DAYS" "15"
+          upsert_env "$RUNTIME_DIR/.env" "IMAGE_LOGS_CLEANUP_INTERVAL_SECONDS" "3600"
+          upsert_env "$RUNTIME_DIR/.env" "IMAGE_LOGS_CLEANUP_BATCH_SIZE" "500"
+          upsert_env "$RUNTIME_DIR/.env" "IMAGE_JOBS_RETENTION_DAYS" "2"
+          upsert_env "$RUNTIME_DIR/.env" "CHATGPT2API_IMAGES_RETENTION_DAYS" "3"
+
+          install -m 0755 "$DEPLOY_DIR/storage-cleanup.sh" "$RUNTIME_DIR/storage-cleanup.sh"
+          if command -v systemctl >/dev/null 2>&1; then
+            cat > /etc/systemd/system/sub2api-storage-cleanup.service <<SERVICE
+          [Unit]
+          Description=Sub2API storage cleanup
+
+          [Service]
+          Type=oneshot
+          Nice=10
+          IOSchedulingClass=idle
+          ExecStart=$RUNTIME_DIR/storage-cleanup.sh
+          SERVICE
+            cat > /etc/systemd/system/sub2api-storage-cleanup.timer <<'TIMER'
+          [Unit]
+          Description=Run Sub2API storage cleanup hourly
+
+          [Timer]
+          OnCalendar=hourly
+          Persistent=true
+
+          [Install]
+          WantedBy=timers.target
+          TIMER
+            systemctl daemon-reload
+            systemctl enable --now sub2api-storage-cleanup.timer
+          fi
 
           cd "$DEPLOY_DIR"
           echo "Loading Sub2API image..."
