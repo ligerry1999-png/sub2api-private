@@ -18,8 +18,16 @@
 - [x] 临时禁用 Deploy Server workflow，避免误触发自动部署
 - [x] 改造部署流程：GitHub Actions 构建镜像，服务器只执行 docker load 和 compose up
 - [x] 改造部署触发方式：只允许手动触发，默认只构建不部署
-- [ ] 推送到 main 后先跑一次 build-only 验证
-- [ ] 验证通过后再手动选择 deploy=true 执行升级
+- [x] 推送到 main 后先跑一次 build-only 验证
+- [x] 验证通过后再手动选择 deploy=true 执行升级
+
+## 异步生图路由恢复
+
+- [x] 确认线上新版镜像缺少 `/v1/image-jobs/*` 路由，导致本地脚本提交异步生图任务 404
+- [x] 从历史定制分支恢复 Image Jobs handler、路由和路由注册测试
+- [ ] 本地轻量验证路由测试通过
+- [ ] GitHub Actions build-only 验证通过
+- [ ] 手动 deploy=true 部署并确认线上异步路由恢复
 
 ## 验证记录
 
