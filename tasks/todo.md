@@ -28,6 +28,13 @@
 - [x] 本地轻量验证路由测试通过
 - [x] GitHub Actions build-only 验证通过
 - [x] 手动 deploy=true 部署并确认线上异步路由恢复
+- [x] 部署脚本增加私有路由探针，防止后续升级再次漏掉 `/v1/image-jobs/*`
+
+## 服务器安全清理记录
+
+- [x] 只清理 Docker BuildKit 构建缓存、systemd journal 旧日志和 apt 包缓存
+- [x] 保留账号池、Postgres、Redis、Sub2API 图片日志、ChatGPT2API 数据和当前运行镜像
+- [x] 系统盘从 84% 降到 47%，服务容器保持运行且 healthy
 
 ## 验证记录
 

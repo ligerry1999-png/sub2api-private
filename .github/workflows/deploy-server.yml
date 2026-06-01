@@ -164,6 +164,30 @@ jobs:
           done
 
           echo "Sub2API health check passed"
+
+          probe_custom_route() {
+            method="$1"
+            path="$2"
+            body="${3:-}"
+            out="/tmp/sub2api-route-probe.out"
+            if [ "$method" = "POST" ]; then
+              status="$(curl -sS -o "$out" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data "$body" "http://127.0.0.1:18080${path}" || true)"
+            else
+              status="$(curl -sS -o "$out" -w '%{http_code}' "http://127.0.0.1:18080${path}" || true)"
+            fi
+            if [ "$status" = "404" ] || [ "$status" = "000" ]; then
+              echo "Custom route probe failed: ${method} ${path} status=${status}"
+              head -c 500 "$out" || true
+              exit 1
+            fi
+            echo "Custom route probe passed: ${method} ${path} status=${status}"
+          }
+
+          probe_custom_route POST /v1/image-jobs/images/generations '{"model":"gpt-image-2","prompt":"probe"}'
+          probe_custom_route POST /v1/image-jobs/images/edits '{"model":"gpt-image-2","prompt":"probe"}'
+          probe_custom_route GET /v1/image-jobs/imgjob_probe
+          probe_custom_route GET /v1/image-jobs/imgjob_probe/result
+
           docker image prune -f >/dev/null || true
           docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml ps
           REMOTE
