@@ -35,6 +35,8 @@
 - [x] 只清理 Docker BuildKit 构建缓存、systemd journal 旧日志和 apt 包缓存
 - [x] 保留账号池、Postgres、Redis、Sub2API 图片日志、ChatGPT2API 数据和当前运行镜像
 - [x] 系统盘从 84% 降到 47%，服务容器保持运行且 healthy
+- [x] 补充私有版升级验收清单，记录每次升级必须保留的私有功能和部署检查点
+- [x] 盘点当前磁盘构成：系统盘约 48%，主要空间来自 Sub2API 生图日志、异步任务结果和 ChatGPT2API 图片文件
 
 ## 验证记录
 
