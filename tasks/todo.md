@@ -10,7 +10,7 @@
 - [x] 把列表里的缩略图从 base64 inline 改成静态 URL/按需加载，进一步减小接口响应体
 - [x] 补一套图片日志保留/清理策略，避免磁盘长期增长
 - [x] 补充生产日志中的阶段耗时观察，确认慢请求主要落在 ChatGPT2API 网关还是 Sub2API 原生兜底
-- [ ] 修复 GitHub Actions 里 frontend 依赖安装的失败项，让 CI 全绿
+- [x] 修复 GitHub Actions 里 frontend 依赖安装的失败项，让 CI 全绿
 
 ## 安全升级计划
 
@@ -37,16 +37,16 @@
 - [x] 系统盘从 84% 降到 47%，服务容器保持运行且 healthy
 - [x] 补充私有版升级验收清单，记录每次升级必须保留的私有功能和部署检查点
 - [x] 盘点当前磁盘构成：系统盘约 48%，主要空间来自 Sub2API 生图日志、异步任务结果和 ChatGPT2API 图片文件
-- [ ] 将生产保留策略收口为：生图日志 15 天、异步任务结果 2 天、ChatGPT2API 图片副本 3 天
+- [x] 将生产保留策略收口为：生图日志 15 天、异步任务结果 2 天、ChatGPT2API 图片副本 3 天
 
 ## Sub2API 0.1.134 私有升级
 
 - [x] 建立独立升级分支 `upgrade-official-0.1.134-private`
 - [x] 使用官方 `v0.1.133..upstream/main` 补丁升级，避免直接覆盖私有分支
 - [x] 解决冲突并保留账号经理角色、图片日志、异步 image-jobs、ChatGPT2API 生图桥接
-- [ ] GitHub Actions build-only 验证通过
-- [ ] 验证通过后手动 `deploy=true` 部署，服务器只加载镜像和重启容器
-- [ ] 部署后检查健康状态、CPU/内存、私有路由探针
+- [x] GitHub Actions build-only 验证通过
+- [x] 验证通过后手动 `deploy=true` 部署，服务器只加载镜像和重启容器
+- [x] 部署后检查健康状态、CPU/内存、私有路由探针
 
 ## 验证记录
 
@@ -56,3 +56,4 @@
 - [x] 本轮 Go 关键包测试通过：`./internal/service`、`./internal/handler/admin`、`./internal/repository`、`./cmd/server`
 - [x] `git diff --check` 通过
 - [x] 硬重启后线上旧容器恢复健康：Sub2API/Postgres/Redis 均 healthy，内部 `/health` 正常
+- [x] Sub2API 0.1.134 私有升级分支部署成功：GitHub Actions run `27115336617` 成功，线上容器 healthy，`/v1/image-jobs/*` 返回鉴权而非 404，`/api/v1/admin/image-logs` 返回鉴权而非 404
