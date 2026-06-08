@@ -39,6 +39,15 @@
 - [x] 盘点当前磁盘构成：系统盘约 48%，主要空间来自 Sub2API 生图日志、异步任务结果和 ChatGPT2API 图片文件
 - [ ] 将生产保留策略收口为：生图日志 15 天、异步任务结果 2 天、ChatGPT2API 图片副本 3 天
 
+## Sub2API 0.1.134 私有升级
+
+- [x] 建立独立升级分支 `upgrade-official-0.1.134-private`
+- [x] 使用官方 `v0.1.133..upstream/main` 补丁升级，避免直接覆盖私有分支
+- [x] 解决冲突并保留账号经理角色、图片日志、异步 image-jobs、ChatGPT2API 生图桥接
+- [ ] GitHub Actions build-only 验证通过
+- [ ] 验证通过后手动 `deploy=true` 部署，服务器只加载镜像和重启容器
+- [ ] 部署后检查健康状态、CPU/内存、私有路由探针
+
 ## 验证记录
 
 - [x] 前端生产构建通过，`ImageLogsView` 已打进前端产物
