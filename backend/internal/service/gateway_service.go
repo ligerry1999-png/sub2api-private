@@ -605,6 +605,7 @@ type UpstreamFailoverError struct {
 	NextAccountAction        NextAccountAction
 	ClientStatusCode         int
 	ClientMessage            string
+	Source                 string      // 错误来源，用于区分上游 OpenAI 与内部 worker bridge
 }
 
 func (e *UpstreamFailoverError) Error() string {

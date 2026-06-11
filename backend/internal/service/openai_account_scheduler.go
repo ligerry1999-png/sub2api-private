@@ -1610,6 +1610,9 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatible(ctx context.C
 	if s != nil && s.service != nil && s.service.isOpenAIAccountRequestRuntimeBlocked(account, req.RequestedModel) {
 		return false
 	}
+	if req.RequiredImageCapability != "" && s != nil && s.service != nil && s.service.isOpenAIImageWorkerCoolingDown(account) {
+		return false
+	}
 	// Quota auto-pause must be evaluated during the initial filter too. Without it the
 	// TopK candidate pool can be filled with paused accounts and the later fresh/DB
 	// rechecks won't reach healthy accounts that fell outside TopK — manifesting as
@@ -1988,7 +1991,7 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 				if selection == nil || selection.Account == nil {
 					return selection, decision, nil
 				}
-				if accountSupportsOpenAICapabilities(selection.Account, requiredCapability, requiredImageCapability) {
+				if s.openAIAccountSupportsSelection(selection.Account, requiredCapability, requiredImageCapability) {
 					return selection, decision, nil
 				}
 				if selection.ReleaseFunc != nil {
@@ -2014,7 +2017,7 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 				return selection, decision, nil
 			}
 			if s.isOpenAIAccountTransportCompatible(selection.Account, requiredTransport) &&
-				accountSupportsOpenAICapabilities(selection.Account, requiredCapability, requiredImageCapability) {
+				s.openAIAccountSupportsSelection(selection.Account, requiredCapability, requiredImageCapability) {
 				return selection, decision, nil
 			}
 			if selection.ReleaseFunc != nil {
@@ -2076,6 +2079,16 @@ func accountSupportsOpenAICapabilities(account *Account, requiredCapability Open
 	}
 	return account.SupportsOpenAIEndpointCapability(requiredCapability) &&
 		account.SupportsOpenAIImageCapability(requiredImageCapability)
+}
+
+func (s *OpenAIGatewayService) openAIAccountSupportsSelection(account *Account, requiredCapability OpenAIEndpointCapability, requiredImageCapability OpenAIImagesCapability) bool {
+	if !accountSupportsOpenAICapabilities(account, requiredCapability, requiredImageCapability) {
+		return false
+	}
+	if requiredImageCapability != "" && s != nil && s.isOpenAIImageWorkerCoolingDown(account) {
+		return false
+	}
+	return true
 }
 
 func cloneExcludedAccountIDs(excludedIDs map[int64]struct{}) map[int64]struct{} {

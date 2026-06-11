@@ -1700,17 +1700,48 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		if bridgeErr == nil {
 			return result, nil
 		}
+		failureKind := classifyOpenAIImagesWorkerFailure(bridgeErr)
+		workerFallbackAllowed := s.openAIImagesWorkerFallbackEnabled() && OpenAIImageWorkerFallbackAllowedFromContext(ctx)
 		if !errors.Is(bridgeErr, errOpenAIImagesWorkerUnsupported) {
 			logger.LegacyPrintf(
 				"service.openai_gateway",
-				"[Warning] OpenAI images worker bridge failed; fallback=%t endpoint=%s request_model=%s error=%s",
-				s.openAIImagesWorkerFallbackEnabled(),
+				"[Warning] OpenAI images worker bridge failed; fallback=%t endpoint=%s request_model=%s account_id=%d failure_kind=%s error=%s",
+				workerFallbackAllowed,
 				parsed.Endpoint,
 				requestModel,
+				account.ID,
+				failureKind,
 				sanitizeUpstreamErrorMessage(bridgeErr.Error()),
 			)
 		}
-		if !s.openAIImagesWorkerFallbackEnabled() {
+		if errors.Is(bridgeErr, errOpenAIImagesWorkerUnsupported) {
+			if !s.openAIImagesWorkerFallbackEnabled() {
+				return nil, bridgeErr
+			}
+			workerFallbackAllowed = true
+		}
+		if openAIImagesWorkerShouldSwitchAccount(bridgeErr) && !workerFallbackAllowed {
+			if cooldownUntil := openAIImagesWorkerCooldownUntilForError(bridgeErr); !cooldownUntil.IsZero() {
+				s.BlockOpenAIImageWorkerScheduling(account, cooldownUntil)
+				logger.LegacyPrintf(
+					"service.openai_gateway",
+					"[OpenAI] Images worker account image cooldown account_id=%d until=%s reason=%s",
+					account.ID,
+					cooldownUntil.Format(time.RFC3339),
+					failureKind,
+				)
+			}
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:           account.Platform,
+				AccountID:          account.ID,
+				AccountName:        account.Name,
+				UpstreamStatusCode: openAIImagesWorkerFailureStatusCode(bridgeErr),
+				Kind:               "failover",
+				Message:            sanitizeUpstreamErrorMessage(bridgeErr.Error()),
+			})
+			return nil, newOpenAIImagesWorkerFailoverError(bridgeErr)
+		}
+		if !workerFallbackAllowed {
 			return nil, bridgeErr
 		}
 	}

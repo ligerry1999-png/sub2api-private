@@ -38,6 +38,9 @@ const (
 	// OpenAIImageGenerationIntent 标识 OpenAI 请求会触发生图能力（用于图片能力维度限流）
 	OpenAIImageGenerationIntent Key = "ctx_openai_image_generation_intent"
 
+	// OpenAIImageWorkerFallbackAllowed 标识当前图片请求允许从 ChatGPT2API worker 回退到 Sub2API native。
+	OpenAIImageWorkerFallbackAllowed Key = "ctx_openai_image_worker_fallback_allowed"
+
 	// Group 认证后的分组信息，由 API Key 认证中间件设置
 	Group Key = "ctx_group"
 
