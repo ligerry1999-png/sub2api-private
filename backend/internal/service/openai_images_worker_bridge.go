@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +18,19 @@ import (
 )
 
 var errOpenAIImagesWorkerUnsupported = errors.New("openai images worker unsupported request")
+
+const openAIImagesWorkerSyntheticStatus = 502
+
+type openAIImagesWorkerFailureKind string
+
+const (
+	openAIImagesWorkerFailureUnknown        openAIImagesWorkerFailureKind = "unknown"
+	openAIImagesWorkerFailureRateLimited    openAIImagesWorkerFailureKind = "rate_limited"
+	openAIImagesWorkerFailureTransient      openAIImagesWorkerFailureKind = "transient"
+	openAIImagesWorkerFailureNoImage        openAIImagesWorkerFailureKind = "no_image"
+	openAIImagesWorkerFailureUnsupported    openAIImagesWorkerFailureKind = "unsupported"
+	openAIImagesWorkerFailureAuthentication openAIImagesWorkerFailureKind = "authentication"
+)
 
 type openAIImagesWorkerPayload struct {
 	AccessToken      string   `json:"access_token"`
@@ -159,6 +173,116 @@ func collectOpenAIImagesFromWorkerBody(body []byte, requestModel string) ([]open
 		return nil, createdAt, errors.New(message)
 	}
 	return results, createdAt, nil
+}
+
+func classifyOpenAIImagesWorkerFailure(err error) openAIImagesWorkerFailureKind {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, errOpenAIImagesWorkerUnsupported) {
+		return openAIImagesWorkerFailureUnsupported
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	switch {
+	case strings.Contains(message, "plus plan limit"),
+		strings.Contains(message, "image generations requests"),
+		strings.Contains(message, "limit resets"),
+		strings.Contains(message, "rate limit"),
+		strings.Contains(message, "too many requests"),
+		strings.Contains(message, "status=429"),
+		strings.Contains(message, " 429 "):
+		return openAIImagesWorkerFailureRateLimited
+	case strings.Contains(message, "token") && (strings.Contains(message, "invalid") || strings.Contains(message, "revoked") || strings.Contains(message, "unauthorized")):
+		return openAIImagesWorkerFailureAuthentication
+	case strings.Contains(message, "worker returned no image"),
+		strings.Contains(message, "returned no image"),
+		strings.Contains(message, "no image"):
+		return openAIImagesWorkerFailureNoImage
+	case strings.Contains(message, "server is overloaded"),
+		strings.Contains(message, "server_is_overloaded"),
+		strings.Contains(message, "server_error"),
+		strings.Contains(message, "status=500"),
+		strings.Contains(message, "status=502"),
+		strings.Contains(message, "status=503"),
+		strings.Contains(message, "status=504"),
+		strings.Contains(message, "timeout"),
+		strings.Contains(message, "deadline exceeded"),
+		strings.Contains(message, "connection reset"),
+		strings.Contains(message, "empty reply"),
+		strings.Contains(message, "eof"):
+		return openAIImagesWorkerFailureTransient
+	default:
+		return openAIImagesWorkerFailureUnknown
+	}
+}
+
+func openAIImagesWorkerCooldownUntilForError(err error) time.Time {
+	if classifyOpenAIImagesWorkerFailure(err) != openAIImagesWorkerFailureRateLimited {
+		return time.Time{}
+	}
+	message := strings.ToLower(err.Error())
+	now := time.Now()
+	if idx := strings.Index(message, "limit resets in "); idx >= 0 {
+		after := message[idx+len("limit resets in "):]
+		fields := strings.Fields(after)
+		if len(fields) >= 2 {
+			if amount, parseErr := strconv.Atoi(strings.Trim(fields[0], ".,;:")); parseErr == nil && amount > 0 {
+				unit := strings.Trim(fields[1], ".,;:")
+				switch {
+				case strings.HasPrefix(unit, "minute"):
+					return now.Add(time.Duration(amount) * time.Minute)
+				case strings.HasPrefix(unit, "hour"):
+					return now.Add(time.Duration(amount) * time.Hour)
+				case strings.HasPrefix(unit, "second"):
+					return now.Add(time.Duration(amount) * time.Second)
+				case strings.HasPrefix(unit, "day"):
+					return now.Add(time.Duration(amount) * 24 * time.Hour)
+				}
+			}
+		}
+	}
+	return now.Add(openAIImageWorkerDefaultCooldown)
+}
+
+func openAIImagesWorkerShouldSwitchAccount(err error) bool {
+	switch classifyOpenAIImagesWorkerFailure(err) {
+	case openAIImagesWorkerFailureRateLimited,
+		openAIImagesWorkerFailureTransient,
+		openAIImagesWorkerFailureNoImage:
+		return true
+	default:
+		return false
+	}
+}
+
+func openAIImagesWorkerRetryableSameAccount(err error) bool {
+	return classifyOpenAIImagesWorkerFailure(err) == openAIImagesWorkerFailureTransient
+}
+
+func openAIImagesWorkerFailureStatusCode(err error) int {
+	if classifyOpenAIImagesWorkerFailure(err) == openAIImagesWorkerFailureRateLimited {
+		return http.StatusTooManyRequests
+	}
+	return openAIImagesWorkerSyntheticStatus
+}
+
+func newOpenAIImagesWorkerFailoverError(err error) *UpstreamFailoverError {
+	if err == nil {
+		return nil
+	}
+	body, _ := json.Marshal(map[string]any{
+		"error": map[string]any{
+			"type":    "image_worker_error",
+			"code":    string(classifyOpenAIImagesWorkerFailure(err)),
+			"message": sanitizeUpstreamErrorMessage(err.Error()),
+		},
+	})
+	return &UpstreamFailoverError{
+		StatusCode:             openAIImagesWorkerFailureStatusCode(err),
+		ResponseBody:           body,
+		RetryableOnSameAccount: openAIImagesWorkerRetryableSameAccount(err),
+		Source:                 "openai_images_worker",
+	}
 }
 
 func (s *OpenAIGatewayService) forwardOpenAIImagesViaWorker(
