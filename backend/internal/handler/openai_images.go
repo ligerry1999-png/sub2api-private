@@ -142,6 +142,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
 	var lastFailoverErr *service.UpstreamFailoverError
+	var lastFailedAccountID int64
 
 	for {
 		reqLog.Debug("openai.images.account_selecting", zap.Int("excluded_account_count", len(failedAccountIDs)))
@@ -164,6 +165,15 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 				return
 			}
 			if lastFailoverErr != nil {
+				if lastFailoverErr.Source == "openai_images_worker" && !service.OpenAIImageWorkerFallbackAllowedFromContext(requestCtx) && lastFailedAccountID > 0 {
+					requestCtx = service.WithOpenAIImageWorkerFallbackAllowed(requestCtx)
+					delete(failedAccountIDs, lastFailedAccountID)
+					reqLog.Warn("openai.images.worker_failover_selection_exhausted_native_fallback_enabled",
+						zap.Int64("account_id", lastFailedAccountID),
+						zap.Int("excluded_account_count", len(failedAccountIDs)),
+					)
+					continue
+				}
 				h.handleFailoverExhausted(c, lastFailoverErr, streamStarted)
 			} else {
 				h.handleFailoverExhaustedSimple(c, 502, streamStarted)
@@ -260,12 +270,13 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 					h.gatewayService.RecordOpenAIAccountSwitch()
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
+					lastFailedAccountID = account.ID
 					if switchCount >= maxAccountSwitches {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
 					switchCount++
-					if h.gatewayService.ShouldStopOpenAIOAuth429Failover(account, failoverErr.StatusCode, switchCount) {
+					if failoverErr.Source != "openai_images_worker" && h.gatewayService.ShouldStopOpenAIOAuth429Failover(account, failoverErr.StatusCode, switchCount) {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
 					}
@@ -275,6 +286,15 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 						zap.Int("switch_count", switchCount),
 						zap.Int("max_switches", maxAccountSwitches),
 					)
+					if failoverErr.Source == "openai_images_worker" && !service.OpenAIImageWorkerFallbackAllowedFromContext(requestCtx) && switchCount >= maxAccountSwitches {
+						requestCtx = service.WithOpenAIImageWorkerFallbackAllowed(requestCtx)
+						delete(failedAccountIDs, account.ID)
+						reqLog.Warn("openai.images.worker_failover_final_native_fallback_enabled",
+							zap.Int64("account_id", account.ID),
+							zap.Int("switch_count", switchCount),
+							zap.Int("max_switches", maxAccountSwitches),
+						)
+					}
 					continue
 				}
 				h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)

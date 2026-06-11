@@ -48,6 +48,14 @@
 - [x] 验证通过后手动 `deploy=true` 部署，服务器只加载镜像和重启容器
 - [x] 部署后检查健康状态、CPU/内存、私有路由探针
 
+## ChatGPT2API 生图桥接失败收口
+
+- [x] ChatGPT2API worker 失败时先区分失败类型：额度限制、临时网页错误、无图片、认证错误、不支持请求
+- [x] 额度限制或临时网页错误时优先换账号，不再立即走 Sub2API 原生兜底
+- [x] Plus 图片额度提示带 `limit resets in ...` 时，只对图片调度设置临时冷却，到期自动恢复，不影响文字/Codex 调用
+- [x] 只有账号切换接近耗尽时，才允许最后一次 Sub2API 原生兜底
+- [x] `mask`、远程图片 URL、特殊图片参数等 worker 不支持的请求保留直接原生兜底，不做无意义换号
+
 ## 验证记录
 
 - [x] 前端生产构建通过，`ImageLogsView` 已打进前端产物
@@ -57,3 +65,4 @@
 - [x] `git diff --check` 通过
 - [x] 硬重启后线上旧容器恢复健康：Sub2API/Postgres/Redis 均 healthy，内部 `/health` 正常
 - [x] Sub2API 0.1.134 私有升级分支部署成功：GitHub Actions run `27115336617` 成功，线上容器 healthy，`/v1/image-jobs/*` 返回鉴权而非 404，`/api/v1/admin/image-logs` 返回鉴权而非 404
+- [ ] 本轮 ChatGPT2API 生图桥接失败收口：等待 GitHub Actions CI 通过后再部署

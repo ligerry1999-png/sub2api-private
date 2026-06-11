@@ -98,3 +98,38 @@ func TestBuildOpenAIImagesWorkerInputImagesRejectsRemoteEditURL(t *testing.T) {
 	_, err := buildOpenAIImagesWorkerInputImages(parsed)
 	require.ErrorIs(t, err, errOpenAIImagesWorkerUnsupported)
 }
+
+func TestClassifyOpenAIImagesWorkerFailure(t *testing.T) {
+	require.Equal(t,
+		openAIImagesWorkerFailureTransient,
+		classifyOpenAIImagesWorkerFailure(io.ErrUnexpectedEOF),
+	)
+	require.Equal(t,
+		openAIImagesWorkerFailureRateLimited,
+		classifyOpenAIImagesWorkerFailure(assertError("You've hit the plus plan limit for image generations requests. You can create more images when the limit resets in 17 hours.")),
+	)
+	require.Equal(t,
+		openAIImagesWorkerFailureTransient,
+		classifyOpenAIImagesWorkerFailure(assertError("image worker failed: status=502 message=server_error")),
+	)
+	require.Equal(t,
+		openAIImagesWorkerFailureNoImage,
+		classifyOpenAIImagesWorkerFailure(assertError("worker returned no image")),
+	)
+	require.Equal(t,
+		openAIImagesWorkerFailureUnsupported,
+		classifyOpenAIImagesWorkerFailure(errOpenAIImagesWorkerUnsupported),
+	)
+	require.False(t, openAIImagesWorkerShouldSwitchAccount(errOpenAIImagesWorkerUnsupported))
+}
+
+func TestOpenAIImagesWorkerCooldownUntilForError(t *testing.T) {
+	before := time.Now()
+	until := openAIImagesWorkerCooldownUntilForError(assertError("You've hit the plus plan limit for image generations requests. You can create more images when the limit resets in 17 hours and 2 minutes."))
+	require.True(t, until.After(before.Add(16*time.Hour)), "cooldown should use the reset hint")
+	require.True(t, until.Before(before.Add(18*time.Hour)), "cooldown should stay close to the reset hint")
+}
+
+type assertError string
+
+func (e assertError) Error() string { return string(e) }

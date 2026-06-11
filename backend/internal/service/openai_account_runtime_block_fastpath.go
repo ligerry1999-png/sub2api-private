@@ -10,6 +10,8 @@ const (
 	openAIAccountStateUpdateTimeout       = 5 * time.Second
 	openAIOAuth429FallbackCooldown        = 5 * time.Second
 	openAIStopSchedulingBridgeCooldown    = 2 * time.Minute
+	openAIImageWorkerDefaultCooldown      = 30 * time.Minute
+	openAIImageWorkerMaxCooldown          = 24 * time.Hour
 	openAIOAuth429StormWindow             = 10 * time.Second
 	openAIOAuth429StormThreshold          = 20
 	openAIOAuth429StormMaxAccountSwitches = 1
@@ -139,6 +141,65 @@ func (s *OpenAIGatewayService) isOpenAIAccountRuntimeBlocked(account *Account) b
 		return true
 	}
 	s.openaiAccountRuntimeBlockUntil.Delete(account.ID)
+	return false
+}
+
+func (s *OpenAIGatewayService) BlockOpenAIImageWorkerScheduling(account *Account, until time.Time) {
+	if s == nil || !isOpenAIOAuthAccount(account) {
+		return
+	}
+	now := time.Now()
+	blockUntil := until
+	if blockUntil.IsZero() || !blockUntil.After(now) {
+		blockUntil = now.Add(openAIImageWorkerDefaultCooldown)
+	}
+	if blockUntil.Sub(now) > openAIImageWorkerMaxCooldown {
+		blockUntil = now.Add(openAIImageWorkerMaxCooldown)
+	}
+
+	for {
+		current, loaded := s.openaiImageWorkerCooldownUntil.Load(account.ID)
+		if !loaded {
+			actual, stored := s.openaiImageWorkerCooldownUntil.LoadOrStore(account.ID, blockUntil)
+			if !stored {
+				return
+			}
+			current = actual
+		}
+
+		currentUntil, ok := current.(time.Time)
+		if !ok || currentUntil.IsZero() {
+			if s.openaiImageWorkerCooldownUntil.CompareAndSwap(account.ID, current, blockUntil) {
+				return
+			}
+			continue
+		}
+		if currentUntil.After(blockUntil) {
+			return
+		}
+		if s.openaiImageWorkerCooldownUntil.CompareAndSwap(account.ID, current, blockUntil) {
+			return
+		}
+	}
+}
+
+func (s *OpenAIGatewayService) isOpenAIImageWorkerCoolingDown(account *Account) bool {
+	if s == nil || !isOpenAIOAuthAccount(account) {
+		return false
+	}
+	value, ok := s.openaiImageWorkerCooldownUntil.Load(account.ID)
+	if !ok {
+		return false
+	}
+	cooldownUntil, ok := value.(time.Time)
+	if !ok || cooldownUntil.IsZero() {
+		s.openaiImageWorkerCooldownUntil.Delete(account.ID)
+		return false
+	}
+	if time.Now().Before(cooldownUntil) {
+		return true
+	}
+	s.openaiImageWorkerCooldownUntil.Delete(account.ID)
 	return false
 }
 
