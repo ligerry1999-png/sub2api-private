@@ -65,4 +65,4 @@
 - [x] `git diff --check` 通过
 - [x] 硬重启后线上旧容器恢复健康：Sub2API/Postgres/Redis 均 healthy，内部 `/health` 正常
 - [x] Sub2API 0.1.134 私有升级分支部署成功：GitHub Actions run `27115336617` 成功，线上容器 healthy，`/v1/image-jobs/*` 返回鉴权而非 404，`/api/v1/admin/image-logs` 返回鉴权而非 404
-- [ ] 本轮 ChatGPT2API 生图桥接失败收口：等待 GitHub Actions CI 通过后再部署
+- [x] 本轮 ChatGPT2API 生图桥接失败收口：CI run `27353810567` 通过，Security Scan run `27353810196` 通过，Deploy Server run `27355014141` 部署成功；线上容器 healthy，私有路由探针返回鉴权而非 404
