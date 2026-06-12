@@ -235,6 +235,8 @@ func RegisterGatewayRoutes(
 		})
 		gateway.GET("/image-jobs/:job_id", h.OpenAIGateway.GetImageJob)
 		gateway.GET("/image-jobs/:job_id/result", h.OpenAIGateway.GetImageJobResult)
+		gateway.POST("/image-jobs/:job_id/cancel", h.OpenAIGateway.CancelImageJob)
+		gateway.DELETE("/image-jobs/:job_id/cancel", h.OpenAIGateway.CancelImageJob)
 	}
 
 	// Gemini 原生 API 兼容层（Gemini SDK/CLI 直连）
@@ -334,6 +336,8 @@ func RegisterGatewayRoutes(
 	})
 	r.GET("/image-jobs/:job_id", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, h.OpenAIGateway.GetImageJob)
 	r.GET("/image-jobs/:job_id/result", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, h.OpenAIGateway.GetImageJobResult)
+	r.POST("/image-jobs/:job_id/cancel", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, h.OpenAIGateway.CancelImageJob)
+	r.DELETE("/image-jobs/:job_id/cancel", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, h.OpenAIGateway.CancelImageJob)
 
 	// Antigravity 模型列表
 	r.GET("/antigravity/models", gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, h.Gateway.AntigravityModels)
