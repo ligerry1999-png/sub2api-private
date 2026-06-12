@@ -172,6 +172,19 @@ func TestGatewayRoutesOpenAIImageJobPathsAreRegistered(t *testing.T) {
 		router.ServeHTTP(w, req)
 		require.Contains(t, w.Body.String(), "Image job not found", "path=%s should hit OpenAI image job handler", path)
 	}
+
+	for _, method := range []string{http.MethodPost, http.MethodDelete} {
+		for _, path := range []string{
+			"/v1/image-jobs/imgjob_test/cancel",
+			"/image-jobs/imgjob_test/cancel",
+		} {
+			req := httptest.NewRequest(method, path, strings.NewReader(""))
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+			require.Contains(t, w.Body.String(), "Image job not found", "method=%s path=%s should hit OpenAI image job cancel handler", method, path)
+		}
+	}
 }
 
 func TestGatewayRoutesGrokImagesAndVideosPathsAreRegistered(t *testing.T) {
