@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,10 +28,23 @@ import (
 )
 
 const (
-	openAIImageJobStatusPending = "pending"
-	openAIImageJobStatusRunning = "running"
-	openAIImageJobStatusSuccess = "success"
-	openAIImageJobStatusFailed  = "failed"
+	openAIImageJobStatusPending  = "pending"
+	openAIImageJobStatusRunning  = "running"
+	openAIImageJobStatusSuccess  = "success"
+	openAIImageJobStatusFailed   = "failed"
+	openAIImageJobStatusCanceled = "canceled"
+
+	openAIImageJobErrorUnknown        = "unknown"
+	openAIImageJobErrorInvalidRequest = "invalid_request"
+	openAIImageJobErrorQuotaExceeded  = "quota_exceeded"
+	openAIImageJobErrorRateLimited    = "rate_limited"
+	openAIImageJobErrorAccountAuth    = "account_auth"
+	openAIImageJobErrorUpstreamModel  = "upstream_model_error"
+	openAIImageJobErrorQueueTimeout   = "queue_timeout"
+	openAIImageJobErrorJobTimeout     = "job_timeout"
+	openAIImageJobErrorClientCanceled = "client_canceled"
+	openAIImageJobErrorNetwork        = "network_error"
+	openAIImageJobErrorInternal       = "internal_error"
 
 	defaultOpenAIImageJobRetentionDays = 30
 	defaultOpenAIImageJobTimeout       = 30 * time.Minute
@@ -43,6 +57,7 @@ type openAIImageJobStore struct {
 	retentionDays int
 	mu            sync.RWMutex
 	jobs          map[string]*openAIImageJob
+	cancelFuncs   map[string]context.CancelFunc
 }
 
 type openAIImageJob struct {
@@ -56,6 +71,8 @@ type openAIImageJob struct {
 	ImageSize   string     `json:"image_size,omitempty"`
 	Prompt      string     `json:"prompt,omitempty"`
 	Error       string     `json:"error,omitempty"`
+	ErrorType   string     `json:"error_type,omitempty"`
+	Retryable   *bool      `json:"retryable,omitempty"`
 	HTTPStatus  int        `json:"http_status,omitempty"`
 	ContentType string     `json:"content_type,omitempty"`
 	ResultBytes int64      `json:"result_bytes,omitempty"`
@@ -86,6 +103,7 @@ func newOpenAIImageJobStore(cfg *config.Config) *openAIImageJobStore {
 		rootDir:       filepath.Join(dataDir, "image_jobs"),
 		retentionDays: retentionDays,
 		jobs:          make(map[string]*openAIImageJob),
+		cancelFuncs:   make(map[string]context.CancelFunc),
 	}
 }
 
@@ -117,7 +135,7 @@ func (h *OpenAIGatewayHandler) GetImageJobResult(c *gin.Context) {
 	}
 	if job.Status != openAIImageJobStatusSuccess {
 		status := http.StatusAccepted
-		if job.Status == openAIImageJobStatusFailed {
+		if job.Status == openAIImageJobStatusFailed || job.Status == openAIImageJobStatusCanceled {
 			status = http.StatusConflict
 		}
 		c.JSON(status, h.imageJobPayload(c, job))
@@ -138,6 +156,35 @@ func (h *OpenAIGatewayHandler) GetImageJobResult(c *gin.Context) {
 		contentType = "application/json"
 	}
 	c.Data(http.StatusOK, contentType, body)
+}
+
+func (h *OpenAIGatewayHandler) CancelImageJob(c *gin.Context) {
+	job, ok := h.lookupImageJob(c)
+	if !ok {
+		return
+	}
+	if h.imageJobStore == nil {
+		h.imageJobStore = newOpenAIImageJobStore(h.cfg)
+	}
+
+	canceledJob, changed, err := h.imageJobStore.cancel(job.ID, time.Now())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"type":    "api_error",
+				"message": "Failed to cancel image job",
+			},
+		})
+		return
+	}
+	if canceledJob == nil {
+		canceledJob = job
+	}
+	status := http.StatusOK
+	if !changed && canceledJob.Status != openAIImageJobStatusCanceled {
+		status = http.StatusConflict
+	}
+	c.JSON(status, h.imageJobPayload(c, canceledJob))
 }
 
 func (h *OpenAIGatewayHandler) createImageJob(c *gin.Context, endpoint string) {
@@ -237,16 +284,33 @@ func (h *OpenAIGatewayHandler) runImageJob(jobID string, endpoint string, body [
 	if h == nil || h.imageJobStore == nil {
 		return
 	}
+	timeout := openAIImageJobTimeout(h.cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	if !h.imageJobStore.registerCancel(jobID, cancel) {
+		cancel()
+		return
+	}
+	defer h.imageJobStore.unregisterCancel(jobID)
+	defer cancel()
+
 	started := time.Now()
-	h.imageJobStore.markRunning(jobID, started)
-	result := h.forwardImageJob(endpoint, body, header)
+	if !h.imageJobStore.markRunning(jobID, started) {
+		return
+	}
+	result := h.forwardImageJob(ctx, endpoint, body, header, timeout)
 	finished := time.Now()
+	if h.imageJobStore.isCanceled(jobID) {
+		return
+	}
 	if result.err != nil {
-		h.imageJobStore.markFailed(jobID, finished, result.statusCode, result.err.Error())
+		errorType, retryable := classifyOpenAIImageJobFailure(result.statusCode, "", result.err)
+		h.imageJobStore.markFailed(jobID, finished, result.statusCode, result.err.Error(), errorType, retryable)
 		logger.L().With(zap.String("component", "handler.openai_gateway.image_jobs")).Warn(
 			"openai.image_job.failed",
 			zap.String("job_id", jobID),
 			zap.Int("status_code", result.statusCode),
+			zap.String("error_type", errorType),
+			zap.Bool("retryable", retryable),
 			zap.Error(result.err),
 		)
 		return
@@ -256,21 +320,22 @@ func (h *OpenAIGatewayHandler) runImageJob(jobID string, endpoint string, body [
 		if msg == "" {
 			msg = http.StatusText(result.statusCode)
 		}
-		h.imageJobStore.markFailed(jobID, finished, result.statusCode, msg)
+		errorType, retryable := classifyOpenAIImageJobFailure(result.statusCode, msg, nil)
+		h.imageJobStore.markFailed(jobID, finished, result.statusCode, msg, errorType, retryable)
 		return
 	}
 	if err := h.imageJobStore.saveResult(jobID, result.statusCode, result.contentType, result.body, finished); err != nil {
-		h.imageJobStore.markFailed(jobID, finished, 0, err.Error())
+		if h.imageJobStore.isCanceled(jobID) {
+			return
+		}
+		errorType, retryable := classifyOpenAIImageJobFailure(0, "", err)
+		h.imageJobStore.markFailed(jobID, finished, 0, err.Error(), errorType, retryable)
 		return
 	}
 	h.imageJobStore.cleanupExpired()
 }
 
-func (h *OpenAIGatewayHandler) forwardImageJob(endpoint string, body []byte, header http.Header) openAIImageJobResult {
-	timeout := openAIImageJobTimeout(h.cfg)
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
+func (h *OpenAIGatewayHandler) forwardImageJob(ctx context.Context, endpoint string, body []byte, header http.Header, timeout time.Duration) openAIImageJobResult {
 	url := "http://127.0.0.1:" + strconv.Itoa(serverPortForImageJob(h.cfg)) + endpoint
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
@@ -345,6 +410,7 @@ func (h *OpenAIGatewayHandler) imageJobPayload(c *gin.Context, job *openAIImageJ
 		"updated_at": job.UpdatedAt,
 		"status_url": "/v1/image-jobs/" + job.ID,
 		"result_url": "/v1/image-jobs/" + job.ID + "/result",
+		"cancel_url": "/v1/image-jobs/" + job.ID + "/cancel",
 	}
 	if job.Model != "" {
 		payload["model"] = job.Model
@@ -364,6 +430,12 @@ func (h *OpenAIGatewayHandler) imageJobPayload(c *gin.Context, job *openAIImageJ
 	if job.Error != "" {
 		payload["error"] = job.Error
 	}
+	if job.ErrorType != "" {
+		payload["error_type"] = job.ErrorType
+	}
+	if job.Retryable != nil {
+		payload["retryable"] = *job.Retryable
+	}
 	if job.HTTPStatus > 0 {
 		payload["http_status"] = job.HTTPStatus
 	}
@@ -375,6 +447,7 @@ func (h *OpenAIGatewayHandler) imageJobPayload(c *gin.Context, job *openAIImageJ
 		if base != "" {
 			payload["status_url"] = base + "/v1/image-jobs/" + job.ID
 			payload["result_url"] = base + "/v1/image-jobs/" + job.ID + "/result"
+			payload["cancel_url"] = base + "/v1/image-jobs/" + job.ID + "/cancel"
 		}
 	}
 	return payload
@@ -417,18 +490,63 @@ func (s *openAIImageJobStore) get(jobID string) (*openAIImageJob, bool) {
 	return job, true
 }
 
-func (s *openAIImageJobStore) markRunning(jobID string, started time.Time) {
+func (s *openAIImageJobStore) registerCancel(jobID string, cancel context.CancelFunc) bool {
+	if s == nil || cancel == nil || !isSafeImageJobID(jobID) {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job := cloneOpenAIImageJob(s.jobs[jobID])
+	if job == nil {
+		var err error
+		job, err = s.readMeta(jobID)
+		if err != nil {
+			return false
+		}
+	}
+	if openAIImageJobTerminal(job.Status) {
+		return false
+	}
+	if s.cancelFuncs == nil {
+		s.cancelFuncs = make(map[string]context.CancelFunc)
+	}
+	s.cancelFuncs[jobID] = cancel
+	return true
+}
+
+func (s *openAIImageJobStore) unregisterCancel(jobID string) {
+	if s == nil || !isSafeImageJobID(jobID) {
+		return
+	}
+	s.mu.Lock()
+	delete(s.cancelFuncs, jobID)
+	s.mu.Unlock()
+}
+
+func (s *openAIImageJobStore) markRunning(jobID string, started time.Time) bool {
+	changed := false
 	_ = s.update(jobID, func(job *openAIImageJob) {
+		if job.Status != openAIImageJobStatusPending {
+			return
+		}
 		job.Status = openAIImageJobStatusRunning
 		job.StartedAt = &started
 		job.UpdatedAt = started
+		changed = true
 	})
+	return changed
 }
 
-func (s *openAIImageJobStore) markFailed(jobID string, finished time.Time, statusCode int, message string) {
+func (s *openAIImageJobStore) markFailed(jobID string, finished time.Time, statusCode int, message string, errorType string, retryable bool) bool {
+	changed := false
 	_ = s.update(jobID, func(job *openAIImageJob) {
+		if openAIImageJobTerminal(job.Status) {
+			return
+		}
 		job.Status = openAIImageJobStatusFailed
 		job.Error = truncateImageJobError(message)
+		job.ErrorType = normalizeOpenAIImageJobErrorType(errorType)
+		job.Retryable = openAIImageJobBoolPtr(retryable)
 		job.HTTPStatus = statusCode
 		job.FinishedAt = &finished
 		job.UpdatedAt = finished
@@ -436,12 +554,74 @@ func (s *openAIImageJobStore) markFailed(jobID string, finished time.Time, statu
 			duration := finished.Sub(*job.StartedAt).Milliseconds()
 			job.DurationMs = &duration
 		}
+		changed = true
 	})
+	return changed
+}
+
+func (s *openAIImageJobStore) cancel(jobID string, canceledAt time.Time) (*openAIImageJob, bool, error) {
+	if s == nil || !isSafeImageJobID(jobID) {
+		return nil, false, fmt.Errorf("invalid image job id")
+	}
+	var cancel context.CancelFunc
+	var job *openAIImageJob
+	changed := false
+	s.mu.Lock()
+	job = cloneOpenAIImageJob(s.jobs[jobID])
+	if job == nil {
+		var err error
+		job, err = s.readMeta(jobID)
+		if err != nil {
+			s.mu.Unlock()
+			return nil, false, err
+		}
+	}
+	switch job.Status {
+	case openAIImageJobStatusSuccess, openAIImageJobStatusFailed:
+		s.mu.Unlock()
+		return job, false, nil
+	case openAIImageJobStatusCanceled:
+		s.mu.Unlock()
+		return job, true, nil
+	default:
+		job.Status = openAIImageJobStatusCanceled
+		job.Error = "Image job canceled"
+		job.ErrorType = openAIImageJobErrorClientCanceled
+		job.Retryable = openAIImageJobBoolPtr(false)
+		job.FinishedAt = &canceledAt
+		job.UpdatedAt = canceledAt
+		if job.StartedAt != nil {
+			duration := canceledAt.Sub(*job.StartedAt).Milliseconds()
+			job.DurationMs = &duration
+		}
+		if s.cancelFuncs != nil {
+			cancel = s.cancelFuncs[jobID]
+			delete(s.cancelFuncs, jobID)
+		}
+		s.jobs[jobID] = cloneOpenAIImageJob(job)
+		changed = true
+	}
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if changed {
+		return cloneOpenAIImageJob(job), true, s.writeMeta(job)
+	}
+	return cloneOpenAIImageJob(job), false, nil
+}
+
+func (s *openAIImageJobStore) isCanceled(jobID string) bool {
+	job, ok := s.get(jobID)
+	return ok && job.Status == openAIImageJobStatusCanceled
 }
 
 func (s *openAIImageJobStore) saveResult(jobID string, statusCode int, contentType string, body []byte, finished time.Time) error {
 	if s == nil {
 		return fmt.Errorf("image job store is not available")
+	}
+	if s.isCanceled(jobID) {
+		return context.Canceled
 	}
 	dir := s.jobDir(jobID)
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -451,6 +631,9 @@ func (s *openAIImageJobStore) saveResult(jobID string, statusCode int, contentTy
 		return err
 	}
 	return s.update(jobID, func(job *openAIImageJob) {
+		if openAIImageJobTerminal(job.Status) {
+			return
+		}
 		job.Status = openAIImageJobStatusSuccess
 		job.HTTPStatus = statusCode
 		job.ContentType = contentType
@@ -458,6 +641,8 @@ func (s *openAIImageJobStore) saveResult(jobID string, statusCode int, contentTy
 		job.FinishedAt = &finished
 		job.UpdatedAt = finished
 		job.Error = ""
+		job.ErrorType = ""
+		job.Retryable = nil
 		if job.StartedAt != nil {
 			duration := finished.Sub(*job.StartedAt).Milliseconds()
 			job.DurationMs = &duration
@@ -510,6 +695,87 @@ func (s *openAIImageJobStore) readMeta(jobID string) (*openAIImageJob, error) {
 		return nil, err
 	}
 	return &job, nil
+}
+
+func classifyOpenAIImageJobFailure(statusCode int, message string, err error) (string, bool) {
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			return openAIImageJobErrorClientCanceled, false
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return openAIImageJobErrorJobTimeout, true
+		}
+		errText := strings.ToLower(err.Error())
+		switch {
+		case strings.Contains(errText, "context deadline exceeded"),
+			strings.Contains(errText, "timeout"),
+			strings.Contains(errText, "timed out"):
+			return openAIImageJobErrorJobTimeout, true
+		case strings.Contains(errText, "connection reset"),
+			strings.Contains(errText, "connection refused"),
+			strings.Contains(errText, "eof"),
+			strings.Contains(errText, "empty reply"),
+			strings.Contains(errText, "broken pipe"),
+			strings.Contains(errText, "no such host"):
+			return openAIImageJobErrorNetwork, true
+		default:
+			return openAIImageJobErrorInternal, true
+		}
+	}
+
+	text := strings.ToLower(strings.TrimSpace(message))
+	if statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden ||
+		strings.Contains(text, "unauthorized") || strings.Contains(text, "invalid api key") ||
+		strings.Contains(text, "authentication") || strings.Contains(text, "forbidden") {
+		return openAIImageJobErrorAccountAuth, false
+	}
+	if statusCode == http.StatusTooManyRequests || strings.Contains(text, "rate_limit") || strings.Contains(text, "rate limit") || strings.Contains(text, "too many") {
+		if strings.Contains(text, "quota") || strings.Contains(text, "usage limit") || strings.Contains(text, "limit reached") || strings.Contains(text, "insufficient_quota") || strings.Contains(text, "credits") {
+			return openAIImageJobErrorQuotaExceeded, false
+		}
+		return openAIImageJobErrorRateLimited, true
+	}
+	if strings.Contains(text, "quota") || strings.Contains(text, "usage limit") || strings.Contains(text, "insufficient_quota") || strings.Contains(text, "credits") {
+		return openAIImageJobErrorQuotaExceeded, false
+	}
+	if statusCode == http.StatusRequestTimeout || statusCode == http.StatusGatewayTimeout ||
+		strings.Contains(text, "queue timeout") || strings.Contains(text, "queued timeout") {
+		return openAIImageJobErrorQueueTimeout, true
+	}
+	if statusCode >= 400 && statusCode < 500 {
+		return openAIImageJobErrorInvalidRequest, false
+	}
+	if statusCode >= 500 {
+		return openAIImageJobErrorUpstreamModel, true
+	}
+	return openAIImageJobErrorUnknown, true
+}
+
+func normalizeOpenAIImageJobErrorType(errorType string) string {
+	switch strings.TrimSpace(errorType) {
+	case openAIImageJobErrorInvalidRequest,
+		openAIImageJobErrorQuotaExceeded,
+		openAIImageJobErrorRateLimited,
+		openAIImageJobErrorAccountAuth,
+		openAIImageJobErrorUpstreamModel,
+		openAIImageJobErrorQueueTimeout,
+		openAIImageJobErrorJobTimeout,
+		openAIImageJobErrorClientCanceled,
+		openAIImageJobErrorNetwork,
+		openAIImageJobErrorInternal:
+		return strings.TrimSpace(errorType)
+	default:
+		return openAIImageJobErrorUnknown
+	}
+}
+
+func openAIImageJobTerminal(status string) bool {
+	switch status {
+	case openAIImageJobStatusSuccess, openAIImageJobStatusFailed, openAIImageJobStatusCanceled:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *openAIImageJobStore) writeMeta(job *openAIImageJob) error {
@@ -686,7 +952,15 @@ func cloneOpenAIImageJob(job *openAIImageJob) *openAIImageJob {
 		v := *job.DurationMs
 		clone.DurationMs = &v
 	}
+	if job.Retryable != nil {
+		v := *job.Retryable
+		clone.Retryable = &v
+	}
 	return &clone
+}
+
+func openAIImageJobBoolPtr(v bool) *bool {
+	return &v
 }
 
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {

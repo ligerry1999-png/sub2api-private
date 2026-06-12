@@ -56,6 +56,13 @@
 - [x] 只有账号切换接近耗尽时，才允许最后一次 Sub2API 原生兜底
 - [x] `mask`、远程图片 URL、特殊图片参数等 worker 不支持的请求保留直接原生兜底，不做无意义换号
 
+## 异步生图 job 可观测性和取消接口
+
+- [x] 为 `/v1/image-jobs/*` 失败结果补充 `error_type` 和 `retryable`
+- [x] 增加 `/v1/image-jobs/:job_id/cancel`，允许客户端取消旧 job
+- [x] 确认取消不会被后台完成结果覆盖
+- [x] 补充路由和状态机测试
+
 ## 验证记录
 
 - [x] 前端生产构建通过，`ImageLogsView` 已打进前端产物
@@ -66,3 +73,4 @@
 - [x] 硬重启后线上旧容器恢复健康：Sub2API/Postgres/Redis 均 healthy，内部 `/health` 正常
 - [x] Sub2API 0.1.134 私有升级分支部署成功：GitHub Actions run `27115336617` 成功，线上容器 healthy，`/v1/image-jobs/*` 返回鉴权而非 404，`/api/v1/admin/image-logs` 返回鉴权而非 404
 - [x] 本轮 ChatGPT2API 生图桥接失败收口：CI run `27353810567` 通过，Security Scan run `27353810196` 通过，Deploy Server run `27355014141` 部署成功；线上容器 healthy，私有路由探针返回鉴权而非 404
+- [x] 本轮异步生图 job 可观测性和取消接口：临时 Go 1.26.4 执行 `gofmt`，`go test ./internal/handler ./internal/server/routes` 通过，`git diff --check` 通过
