@@ -32,6 +32,7 @@ func RegisterGatewayRoutes(
 	requireGroupGoogle := middleware.RequireGroupAssignment(settingService, middleware.GoogleErrorWriter)
 
 	r.GET("/image-files/*filepath", h.OpenAIGateway.ServeImageJobPublicFile)
+	r.HEAD("/image-files/*filepath", h.OpenAIGateway.ServeImageJobPublicFile)
 
 	// API网关（Claude API兼容）
 	gateway := r.Group("/v1")
