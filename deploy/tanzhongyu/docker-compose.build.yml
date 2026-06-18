@@ -1,0 +1,7 @@
+services:
+  sub2api:
+    image: sub2api:private-prod
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+
