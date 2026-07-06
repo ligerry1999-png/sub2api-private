@@ -196,26 +196,6 @@ func (s *OpenAIGatewayService) BlockOpenAIImageWorkerScheduling(account *Account
 	}
 }
 
-func (s *OpenAIGatewayService) isOpenAIImageWorkerCoolingDown(account *Account) bool {
-	if s == nil || !isOpenAIOAuthAccount(account) {
-		return false
-	}
-	value, ok := s.openaiImageWorkerCooldownUntil.Load(account.ID)
-	if !ok {
-		return false
-	}
-	cooldownUntil, ok := value.(time.Time)
-	if !ok || cooldownUntil.IsZero() {
-		s.openaiImageWorkerCooldownUntil.Delete(account.ID)
-		return false
-	}
-	if time.Now().Before(cooldownUntil) {
-		return true
-	}
-	s.openaiImageWorkerCooldownUntil.Delete(account.ID)
-	return false
-}
-
 func (s *OpenAIGatewayService) recordOpenAIOAuth429() {
 	if s == nil {
 		return

@@ -936,16 +936,6 @@ func (s *OpenAIGatewayService) handleOpenAIImagesErrorResponse(
 	return nil, upErr
 }
 
-func buildOpenAIImagesAPIResponse(
-	results []openAIResponsesImageResult,
-	createdAt int64,
-	usageRaw []byte,
-	firstMeta openAIResponsesImageResult,
-	responseFormat string,
-) ([]byte, error) {
-	return buildOpenAIImagesAPIResponseWithDelivery(results, createdAt, usageRaw, firstMeta, responseFormat, nil)
-}
-
 type openAIImagesResultDeliveryOptions struct {
 	Mode    string
 	BaseURL string
@@ -1146,7 +1136,7 @@ func safePublicImagePathSegment(value string) string {
 	var b strings.Builder
 	for _, r := range value {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
-			b.WriteRune(r)
+			_, _ = b.WriteRune(r)
 		}
 	}
 	return b.String()
