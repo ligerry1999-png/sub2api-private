@@ -104,7 +104,31 @@ func TestServeImageJobPublicFile(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Header().Get("Content-Type"), "image/png")
+	require.Equal(t, "public, max-age=86400, immutable", rec.Header().Get("Cache-Control"))
 	require.Equal(t, raw, rec.Body.Bytes())
+}
+
+func TestServeImageJobPublicFileRejectsNonImageExtension(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dataDir := t.TempDir()
+	rel := filepath.Join("image_jobs", "imgjob_test", "public", "2026", "06", "18", "sample.txt")
+	require.NoError(t, os.MkdirAll(filepath.Join(dataDir, filepath.Dir(rel)), 0o755))
+	raw := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 0, 0, 0, 0}
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, rel), raw, 0o644))
+
+	h := &OpenAIGatewayHandler{
+		imageJobStore: newOpenAIImageJobStore(&config.Config{
+			Pricing: config.PricingConfig{DataDir: dataDir},
+		}),
+	}
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Params = gin.Params{{Key: "filepath", Value: "/" + filepath.ToSlash(rel)}}
+	c.Request = httptest.NewRequest(http.MethodGet, "/image-files/"+filepath.ToSlash(rel), nil)
+
+	h.ServeImageJobPublicFile(c)
+
+	require.Equal(t, http.StatusNotFound, rec.Code)
 }
 
 func TestServeImageJobPublicFileRejectsNonPublicPath(t *testing.T) {

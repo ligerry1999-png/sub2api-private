@@ -441,6 +441,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 			"/health",
 			"/responses",
 			"/responses/compact",
+			"/image-files/image_jobs/imgjob_test/public/2026/07/06/sample.png",
 		}
 
 		for _, path := range apiPaths {
@@ -645,6 +646,7 @@ func TestServeEmbeddedFrontend(t *testing.T) {
 			"/health",
 			"/responses",
 			"/responses/compact",
+			"/image-files/image_jobs/imgjob_test/public/2026/07/06/sample.png",
 		}
 
 		for _, path := range apiPaths {

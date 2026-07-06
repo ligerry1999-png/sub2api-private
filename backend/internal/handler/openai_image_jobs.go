@@ -212,6 +212,15 @@ func (h *OpenAIGatewayHandler) ServeImageJobPublicFile(c *gin.Context) {
 		})
 		return
 	}
+	if !isAllowedImageJobPublicFileExtension(rel) {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": gin.H{
+				"type":    "not_found_error",
+				"message": "Image file not found",
+			},
+		})
+		return
+	}
 	fullPath := filepath.Join(h.imageJobStore.dataDir(), filepath.FromSlash(rel))
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
@@ -233,7 +242,17 @@ func (h *OpenAIGatewayHandler) ServeImageJobPublicFile(c *gin.Context) {
 		})
 		return
 	}
+	c.Header("Cache-Control", "public, max-age=86400, immutable")
 	c.Data(http.StatusOK, mimeType, data)
+}
+
+func isAllowedImageJobPublicFileExtension(path string) bool {
+	switch strings.ToLower(strings.TrimSpace(filepath.Ext(path))) {
+	case ".png", ".jpg", ".jpeg", ".webp", ".gif":
+		return true
+	default:
+		return false
+	}
 }
 
 func (h *OpenAIGatewayHandler) createImageJob(c *gin.Context, endpoint string) {
