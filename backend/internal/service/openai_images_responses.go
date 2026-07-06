@@ -1243,6 +1243,7 @@ func (s *OpenAIGatewayService) tryWriteOpenAIImagesStreamEvent(
 func (s *OpenAIGatewayService) handleOpenAIImagesOAuthNonStreamingResponse(
 	resp *http.Response,
 	c *gin.Context,
+	account *Account,
 	parsed *OpenAIImagesRequest,
 	startTime time.Time,
 	responseFormat string,
@@ -1309,7 +1310,14 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthNonStreamingResponse(
 	if err != nil {
 		return OpenAIUsage{}, 0, nil, err
 	}
-	s.recordOpenAIImagesLog(c, parsed, results, createdAt, usageRaw, firstMeta, resp.StatusCode, startTime)
+	s.recordOpenAIImagesLog(c.Request.Context(), c, account, parsed, fallbackModel, imageLogSourceSub2API, resp.Header.Get("x-request-id"), startTime, results, map[string]any{
+		"route":                imageLogSourceSub2API,
+		"upstream_status_code": resp.StatusCode,
+		"response_model":       firstMeta.Model,
+		"response_size":        firstMeta.Size,
+		"response_quality":     firstMeta.Quality,
+		"response_background":  firstMeta.Background,
+	})
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	c.Data(resp.StatusCode, "application/json; charset=utf-8", responseBody)
 	return usage, len(results), openAIResponsesImageResultSizes(results), nil
@@ -1851,7 +1859,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 			)
 		}
 	} else {
-		usage, imageCount, imageOutputSizes, err = s.handleOpenAIImagesOAuthNonStreamingResponse(resp, c, parsed, startTime, parsed.ResponseFormat, requestModel)
+		usage, imageCount, imageOutputSizes, err = s.handleOpenAIImagesOAuthNonStreamingResponse(resp, c, account, parsed, startTime, parsed.ResponseFormat, requestModel)
 		if err != nil {
 			return nil, s.handleOpenAIImagesOAuthResponseError(
 				upstreamCtx,
