@@ -17,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/wire"
 	"github.com/redis/go-redis/v9"
+	"golang.org/x/net/http2"
 )
 
 // ProviderSet 提供服务器层的依赖
@@ -99,16 +100,6 @@ func ProvideRouter(
 // ProvideHTTPServer 提供 HTTP 服务器
 func ProvideHTTPServer(cfg *config.Config, router *gin.Engine) *http.Server {
 	httpHandler := http.Handler(router)
-
-	globalMaxSize := cfg.Server.MaxRequestBodySize
-	if globalMaxSize <= 0 {
-		globalMaxSize = cfg.Gateway.MaxBodySize
-	}
-	if globalMaxSize > 0 {
-		httpHandler = http.MaxBytesHandler(httpHandler, globalMaxSize)
-		log.Printf("Global max request body size: %d bytes (%.2f MB)", globalMaxSize, float64(globalMaxSize)/(1<<20))
-	}
-
 	server := &http.Server{
 		Addr:    cfg.Server.Address(),
 		Handler: httpHandler,
@@ -120,28 +111,42 @@ func ProvideHTTPServer(cfg *config.Config, router *gin.Engine) *http.Server {
 		// 不设置 ReadTimeout，因为大请求体可能需要较长时间读取
 	}
 
-	// 根据配置决定是否启用 H2C。Go 1.26 起直接通过 http.Server.Protocols 声明明文 HTTP/2。
-	if cfg.Server.H2C.Enabled {
-		h2cConfig := cfg.Server.H2C
-		protocols := new(http.Protocols)
-		protocols.SetHTTP1(true)
-		protocols.SetUnencryptedHTTP2(true)
-		server.Protocols = protocols
-		server.HTTP2 = &http.HTTP2Config{
-			MaxConcurrentStreams:          int(h2cConfig.MaxConcurrentStreams),
-			MaxReadFrameSize:              int(h2cConfig.MaxReadFrameSize),
-			MaxReceiveBufferPerConnection: int(h2cConfig.MaxUploadBufferPerConnection),
-			MaxReceiveBufferPerStream:     int(h2cConfig.MaxUploadBufferPerStream),
-		}
-		log.Printf("HTTP/2 Cleartext (h2c) enabled: max_concurrent_streams=%d, idle_timeout=%ds, max_read_frame_size=%d, max_upload_buffer_per_connection=%d, max_upload_buffer_per_stream=%d",
-			h2cConfig.MaxConcurrentStreams,
-			h2cConfig.IdleTimeout,
-			h2cConfig.MaxReadFrameSize,
-			h2cConfig.MaxUploadBufferPerConnection,
-			h2cConfig.MaxUploadBufferPerStream,
-		)
+	globalMaxSize := cfg.Server.MaxRequestBodySize
+	if globalMaxSize <= 0 {
+		globalMaxSize = cfg.Gateway.MaxBodySize
+	}
+	if globalMaxSize > 0 {
+		httpHandler = http.MaxBytesHandler(httpHandler, globalMaxSize)
+		log.Printf("Global max request body size: %d bytes (%.2f MB)", globalMaxSize, float64(globalMaxSize)/(1<<20))
 	}
 
+	// 根据配置决定是否启用 H2C
+	if cfg.Server.H2C.Enabled {
+		h2cConfig := cfg.Server.H2C
+		if err := http2.ConfigureServer(server, &http2.Server{
+			MaxConcurrentStreams:         h2cConfig.MaxConcurrentStreams,
+			IdleTimeout:                  time.Duration(h2cConfig.IdleTimeout) * time.Second,
+			MaxReadFrameSize:             uint32(h2cConfig.MaxReadFrameSize),
+			MaxUploadBufferPerConnection: int32(h2cConfig.MaxUploadBufferPerConnection),
+			MaxUploadBufferPerStream:     int32(h2cConfig.MaxUploadBufferPerStream),
+		}); err != nil {
+			log.Printf("Failed to configure HTTP/2 Cleartext (h2c): %v", err)
+		} else {
+			protocols := new(http.Protocols)
+			protocols.SetHTTP1(true)
+			protocols.SetUnencryptedHTTP2(true)
+			server.Protocols = protocols
+			log.Printf("HTTP/2 Cleartext (h2c) enabled: max_concurrent_streams=%d, idle_timeout=%ds, max_read_frame_size=%d, max_upload_buffer_per_connection=%d, max_upload_buffer_per_stream=%d",
+				h2cConfig.MaxConcurrentStreams,
+				h2cConfig.IdleTimeout,
+				h2cConfig.MaxReadFrameSize,
+				h2cConfig.MaxUploadBufferPerConnection,
+				h2cConfig.MaxUploadBufferPerStream,
+			)
+		}
+	}
+
+	server.Handler = httpHandler
 	return server
 }
 

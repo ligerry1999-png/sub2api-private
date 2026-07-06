@@ -105,20 +105,6 @@ func TestAdminService_CreateUser_EmailExists(t *testing.T) {
 	require.Empty(t, repo.created)
 }
 
-func TestAdminService_CreateUser_AllowsAccountManagerRole(t *testing.T) {
-	repo := &userRepoStub{nextID: 11}
-	svc := &adminServiceImpl{userRepo: repo}
-
-	user, err := svc.CreateUser(context.Background(), &CreateUserInput{
-		Email:    "manager@test.com",
-		Password: "strong-pass",
-		Role:     RoleAccountManager,
-	})
-
-	require.NoError(t, err)
-	require.Equal(t, RoleAccountManager, user.Role)
-}
-
 func TestAdminService_CreateUser_CreateError(t *testing.T) {
 	createErr := errors.New("db down")
 	repo := &userRepoStub{createErr: createErr}
