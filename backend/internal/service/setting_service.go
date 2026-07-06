@@ -1143,6 +1143,25 @@ var legacyClaudeCodeCodexWhitelistEntry = openai.AllowedClientEntry{
 	UAContains: []string{"Claude Code/"},
 }
 
+func (s *SettingService) IsOpenAIAllowClaudeCodeCodexPluginEnabled(ctx context.Context) bool {
+	if s == nil || s.settingRepo == nil {
+		return false
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	dbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), codexRestrictionPolicyDBTimeout)
+	defer cancel()
+	value, err := s.settingRepo.GetValue(dbCtx, SettingKeyOpenAIAllowClaudeCodeCodexPlugin)
+	if err != nil {
+		if !errors.Is(err, ErrSettingNotFound) {
+			slog.Warn("failed to get deprecated openai allow claude code codex plugin setting", "error", err)
+		}
+		return false
+	}
+	return strings.TrimSpace(value) == "true"
+}
+
 // MigrateOpenAIAllowClaudeCodeCodexPluginSetting folds the deprecated global Claude Code
 // plugin allow switch into codex_cli_only_whitelist. The app-server identity model is the
 // same originator + UA marker pair, so runtime checks no longer need a separate flag.
