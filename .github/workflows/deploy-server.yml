@@ -169,6 +169,33 @@ jobs:
           fi
 
           cd "$DEPLOY_DIR"
+          wait_for_image_jobs_idle() {
+            jobs_root="$RUNTIME_DIR/data/image_jobs"
+            if [ ! -d "$jobs_root" ]; then
+              echo "No image job directory found; continuing deployment"
+              return 0
+            fi
+            idle_checks=0
+            for attempt in $(seq 1 120); do
+              active_jobs="$(find "$jobs_root" -name meta.json -mmin -120 -type f -exec \
+                grep -lE '"status"[[:space:]]*:[[:space:]]*"(pending|running)"' {} + 2>/dev/null | wc -l | tr -d ' ')"
+              if [ "$active_jobs" = "0" ]; then
+                idle_checks=$((idle_checks + 1))
+                if [ "$idle_checks" -ge 2 ]; then
+                  echo "Image jobs are idle; continuing deployment"
+                  return 0
+                fi
+              else
+                idle_checks=0
+                echo "Waiting for ${active_jobs} active image job(s) before restart"
+              fi
+              sleep 15
+            done
+            echo "Timed out waiting for image jobs to become idle; deployment stopped before restart"
+            return 1
+          }
+
+          wait_for_image_jobs_idle
           echo "Loading Sub2API image..."
           docker load -i /tmp/sub2api-image.tgz
           rm -f /tmp/sub2api-image.tgz
