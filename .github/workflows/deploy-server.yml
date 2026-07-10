@@ -177,8 +177,8 @@ jobs:
             fi
             idle_checks=0
             for attempt in $(seq 1 120); do
-              active_jobs="$(find "$jobs_root" -name meta.json -mmin -120 -type f -exec \
-                grep -lE '"status"[[:space:]]*:[[:space:]]*"(pending|running)"' {} + 2>/dev/null | wc -l | tr -d ' ')"
+              active_jobs="$({ find "$jobs_root" -name meta.json -mmin -120 -type f -exec \
+                grep -lE '"status"[[:space:]]*:[[:space:]]*"(pending|running)"' {} + 2>/dev/null || true; } | wc -l | tr -d ' ')"
               if [ "$active_jobs" = "0" ]; then
                 idle_checks=$((idle_checks + 1))
                 if [ "$idle_checks" -ge 2 ]; then
