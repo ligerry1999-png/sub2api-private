@@ -81,9 +81,10 @@
 - [x] 选择性应用 Codex 0.144.1 客户端兼容更新，并为 ChatGPT 图像上游的 `tool_choice` 协议变化补充窄范围回退
 - [x] 保留异步 `/v1/image-jobs/*`、图片公网 URL、图片日志、ChatGPT2API 桥接和部署保护逻辑
 - [x] 为图片工具请求构造补充回归测试，覆盖原始 `tools`/`tool_choice` 与兼容重试请求
-- [ ] 运行格式、后端定向测试和 GitHub Actions build-only 验证
-- [ ] 图片任务空闲后，使用 GitHub Actions 部署并验证健康检查、私有路由和实际生图
+- [x] 运行格式检查和 GitHub Actions build-only 验证（run `29188351811` 通过）
+- [x] 图片任务空闲后，使用 GitHub Actions 部署并验证健康检查、私有路由（run `29188525248` 通过；线上健康检查与五个私有路由均正常鉴权）
+- [ ] 等待下一次真实带密钥的生图请求，确认上游 `tool_choice=image_generation` 400 会自动重试为 `tool_choice=auto`
 
 ## 0.1.151 私有兼容升级复盘
 
-- [ ] 记录最终合入范围、验证结果、上线版本和一键回滚点
+- [x] 记录最终合入范围、验证结果、上线版本和一键回滚点：版本 `0.1.151-private.1`，代码提交 `a860cb8a`，构建 run `29188351811`，部署 run `29188525248`；回滚可在部署工作流选择上一成功分支/镜像，或将服务器镜像切回部署前的 `sub2api:private-prod` 备份
