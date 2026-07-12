@@ -74,3 +74,16 @@
 - [x] Sub2API 0.1.134 私有升级分支部署成功：GitHub Actions run `27115336617` 成功，线上容器 healthy，`/v1/image-jobs/*` 返回鉴权而非 404，`/api/v1/admin/image-logs` 返回鉴权而非 404
 - [x] 本轮 ChatGPT2API 生图桥接失败收口：CI run `27353810567` 通过，Security Scan run `27353810196` 通过，Deploy Server run `27355014141` 部署成功；线上容器 healthy，私有路由探针返回鉴权而非 404
 - [x] 本轮异步生图 job 可观测性和取消接口：临时 Go 1.26.4 执行 `gofmt`，`go test ./internal/handler ./internal/server/routes` 通过，`git diff --check` 通过
+
+## Sub2API 0.1.151 私有兼容升级
+
+- [x] 建立当前私有分支的可回滚基线，获取官方 `v0.1.145..v0.1.151` 提交范围
+- [x] 选择性应用 Codex 0.144.1 客户端兼容更新，并为 ChatGPT 图像上游的 `tool_choice` 协议变化补充窄范围回退
+- [x] 保留异步 `/v1/image-jobs/*`、图片公网 URL、图片日志、ChatGPT2API 桥接和部署保护逻辑
+- [x] 为图片工具请求构造补充回归测试，覆盖原始 `tools`/`tool_choice` 与兼容重试请求
+- [ ] 运行格式、后端定向测试和 GitHub Actions build-only 验证
+- [ ] 图片任务空闲后，使用 GitHub Actions 部署并验证健康检查、私有路由和实际生图
+
+## 0.1.151 私有兼容升级复盘
+
+- [ ] 记录最终合入范围、验证结果、上线版本和一键回滚点

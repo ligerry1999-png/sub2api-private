@@ -424,6 +424,37 @@ func buildOpenAIImagesResponsesRequest(parsed *OpenAIImagesRequest, toolModel st
 	return req, nil
 }
 
+// buildOpenAIImagesResponsesAutoToolChoiceRequest preserves the historical
+// explicit tool choice for normal requests, but provides a narrow compatibility
+// form for the ChatGPT internal Responses endpoint. Some upstream revisions
+// reject the explicit image_generation choice even though the same tool is
+// present in tools. In that case tool_choice=auto still keeps the image tool
+// available without sending an invalid forced selection.
+func buildOpenAIImagesResponsesAutoToolChoiceRequest(parsed *OpenAIImagesRequest, toolModel string) ([]byte, error) {
+	req, err := buildOpenAIImagesResponsesRequest(parsed, toolModel)
+	if err != nil {
+		return nil, err
+	}
+	return sjson.SetBytes(req, "tool_choice", "auto")
+}
+
+func isOpenAIImagesToolChoiceCompatibilityError(resp *http.Response) bool {
+	if resp == nil || resp.StatusCode != http.StatusBadRequest || resp.Body == nil {
+		return false
+	}
+	body, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	if err != nil {
+		return false
+	}
+	message := strings.ToLower(strings.TrimSpace(extractUpstreamErrorMessage(body)))
+	return strings.Contains(message, "tool choice") &&
+		strings.Contains(message, "image_generation") &&
+		strings.Contains(message, "not found") &&
+		strings.Contains(message, "tools")
+}
+
 func shouldPassOpenAIImagesN(model string, n int) bool {
 	if n <= 1 {
 		return false
@@ -1782,6 +1813,29 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 			Message:            safeErr,
 		})
 		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
+	}
+	if isOpenAIImagesToolChoiceCompatibilityError(resp) {
+		compatBody, compatErr := buildOpenAIImagesResponsesAutoToolChoiceRequest(parsed, requestModel)
+		if compatErr != nil {
+			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Images tool_choice compatibility fallback build failed: %v", compatErr)
+		} else {
+			compatReq, requestErr := s.buildUpstreamRequest(upstreamCtx, c, account, compatBody, token, true, parsed.StickySessionSeed(), false)
+			if requestErr != nil {
+				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Images tool_choice compatibility fallback request build failed: %v", requestErr)
+			} else {
+				compatReq.Header.Set("Content-Type", "application/json")
+				compatReq.Header.Set("Accept", "text/event-stream")
+				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Retrying image request with tool_choice=auto after upstream image_generation choice rejection")
+				compatResp, compatRequestErr := s.httpUpstream.Do(compatReq, proxyURL, account.ID, account.Concurrency)
+				if compatRequestErr == nil && compatResp != nil {
+					_ = resp.Body.Close()
+					resp = compatResp
+					SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
+				} else if compatRequestErr != nil {
+					logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Images tool_choice compatibility fallback request failed: %s", sanitizeUpstreamErrorMessage(compatRequestErr.Error()))
+				}
+			}
+		}
 	}
 	if resp.StatusCode >= 400 {
 		respBody := s.readUpstreamErrorBody(resp)
