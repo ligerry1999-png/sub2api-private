@@ -8,6 +8,7 @@ This directory is the private deployment layer for the Tanzhongyu Sub2API test i
 - The full source code is kept in this private repository for future customization.
 - When source edits are needed, build with `docker-compose.build.yml` and switch `SUB2API_IMAGE` to `sub2api:private-prod`.
 - The service binds to `127.0.0.1:18080` by default so it is not publicly exposed until Nginx/domain routing is added.
+- Image-worker requests time out after 480 seconds by default so stalled generations can be retried promptly.
 - For a temporary browser preview without changing the production `api.tanzhongyu.asia` gateway, `nginx-sub2api-preview-8443.conf` exposes Sub2API at `https://api.tanzhongyu.asia:8443/` with Basic Auth.
 - For the production endpoint, first install `nginx-sub2api-http-precert.conf`, then issue the certificate, then switch to `nginx-sub2api-prod.conf`.
 

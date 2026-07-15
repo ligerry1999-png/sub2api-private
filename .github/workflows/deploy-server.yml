@@ -133,7 +133,7 @@ jobs:
           upsert_env "$RUNTIME_DIR/.env" "GATEWAY_IMAGE_WORKER_FALLBACK_ENABLED" "true"
           upsert_env "$RUNTIME_DIR/.env" "GATEWAY_RESPONSE_HEADER_TIMEOUT" "1200"
           upsert_env "$RUNTIME_DIR/.env" "GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT" "0"
-          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_IMAGE_WORKER_TIMEOUT_SECONDS" "1200"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_IMAGE_WORKER_TIMEOUT_SECONDS" "480"
           upsert_env "$RUNTIME_DIR/.env" "IMAGE_LOGS_CLEANUP_ENABLED" "true"
           upsert_env "$RUNTIME_DIR/.env" "IMAGE_LOGS_RETENTION_DAYS" "15"
           upsert_env "$RUNTIME_DIR/.env" "IMAGE_LOGS_CLEANUP_INTERVAL_SECONDS" "3600"
