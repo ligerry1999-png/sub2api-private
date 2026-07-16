@@ -47,6 +47,35 @@ func TestServeImageJobPublicFileRejectsPrivateResult(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, recorder.Code)
 }
 
+func TestPreserveImageJobForwardedBaseHeaders(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("uses direct caller base for background request", func(t *testing.T) {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Request = httptest.NewRequest(http.MethodPost, "http://127.0.0.1:18080/v1/image-jobs/images/generations", nil)
+		header := make(http.Header)
+
+		preserveImageJobForwardedBaseHeaders(ctx, header)
+
+		require.Equal(t, "127.0.0.1:18080", header.Get("X-Forwarded-Host"))
+		require.Equal(t, "http", header.Get("X-Forwarded-Proto"))
+	})
+
+	t.Run("keeps public proxy base", func(t *testing.T) {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		ctx.Request = httptest.NewRequest(http.MethodPost, "http://127.0.0.1:18080/v1/image-jobs/images/generations", nil)
+		header := http.Header{
+			"X-Forwarded-Host":  []string{"sub2api.tanzhongyu.asia"},
+			"X-Forwarded-Proto": []string{"https"},
+		}
+
+		preserveImageJobForwardedBaseHeaders(ctx, header)
+
+		require.Equal(t, "sub2api.tanzhongyu.asia", header.Get("X-Forwarded-Host"))
+		require.Equal(t, "https", header.Get("X-Forwarded-Proto"))
+	})
+}
+
 func TestClassifyOpenAIImageJobFailure(t *testing.T) {
 	tests := []struct {
 		name          string
