@@ -10,13 +10,13 @@
 
 - OpenAI 账号列表显示 Team/Personal 空间信息。
 - `account_manager` 受限账号管理员角色。
-- `/api/v1/admin/image-logs` 生图日志、缩略图和 10 天清理策略。
+- `/api/v1/admin/image-logs` 生图日志、缩略图和 7 天清理策略。
 - 旧客户端使用的 `/v1/image-jobs/*` 异步生图、失败分类和取消接口。
 - `result_delivery=file_url` 公网图片 URL；未传参数时继续兼容 Base64。
 - ChatGPT2API 图片 worker 桥接及失败分类；生产默认 `GATEWAY_IMAGE_WORKER_ENABLED=false`。
 - 图片工具选择被上游拒绝时，窄范围重试 `tool_choice=auto`。
 - Nginx 大图上传配置：100 MB、请求体 600 秒、编辑图请求先完整缓冲。
-- 存储保留：生图日志 10 天、异步任务 2 天、ChatGPT2API 图片副本 3 天。
+- 存储保留：生图日志 7 天、异步任务 2 天、ChatGPT2API 图片副本 3 天。
 
 ## 安全部署顺序
 
