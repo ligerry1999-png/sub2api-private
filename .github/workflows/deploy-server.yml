@@ -1,10 +1,13 @@
 name: Deploy Server
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Load the image on the server and restart Sub2API"
+        required: true
+        default: false
+        type: boolean
 
 concurrency:
   group: sub2api-server-deploy
@@ -29,6 +32,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Validate deploy secrets
+        if: ${{ inputs.deploy == true }}
         run: |
           set -euo pipefail
           test -n "$DEPLOY_HOST" || { echo "DEPLOY_HOST is required"; exit 1; }
@@ -37,6 +41,7 @@ jobs:
           test -n "$CHATGPT2API_INTERNAL_BRIDGE_KEY" || { echo "CHATGPT2API_INTERNAL_BRIDGE_KEY is required"; exit 1; }
 
       - name: Configure SSH
+        if: ${{ inputs.deploy == true }}
         run: |
           set -euo pipefail
           DEPLOY_PORT="${DEPLOY_PORT:-22}"
@@ -45,14 +50,27 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
 
+      - name: Build Docker image
+        run: |
+          set -euo pipefail
+          IMAGE_BUNDLE="/tmp/sub2api-image-${GITHUB_SHA}.tar.gz"
+          docker build -t sub2api:private-prod .
+          docker save sub2api:private-prod | gzip > "$IMAGE_BUNDLE"
+
       - name: Upload release bundle
+        if: ${{ inputs.deploy == true }}
         run: |
           set -euo pipefail
           DEPLOY_PORT="${DEPLOY_PORT:-22}"
           BUNDLE="/tmp/sub2api-release-${GITHUB_SHA}.tgz"
+          IMAGE_BUNDLE="/tmp/sub2api-image-${GITHUB_SHA}.tar.gz"
           tar --exclude='.git' -czf "$BUNDLE" .
-          scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" "$BUNDLE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/sub2api-release.tgz"
-          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" <<'REMOTE'
+          scp -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+            -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" "$BUNDLE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/sub2api-release.tgz"
+          scp -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+            -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" "$IMAGE_BUNDLE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/sub2api-image.tgz"
+          ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+            -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" <<'REMOTE'
           set -euo pipefail
           RELEASE_DIR="/opt/sub2api-release"
           NEXT_DIR="/opt/sub2api-release.next"
@@ -71,13 +89,15 @@ jobs:
           REMOTE
 
       - name: Deploy Sub2API
+        if: ${{ inputs.deploy == true }}
         run: |
           set -euo pipefail
           DEPLOY_PORT="${DEPLOY_PORT:-22}"
           BRIDGE_KEY_B64="$(printf '%s' "$CHATGPT2API_INTERNAL_BRIDGE_KEY" | base64 -w 0)"
 
-          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
-            "BRIDGE_KEY_B64='$BRIDGE_KEY_B64' bash -s" <<'REMOTE'
+          ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+            -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "BRIDGE_KEY_B64='$BRIDGE_KEY_B64' timeout 15m bash -s" <<'REMOTE'
           set -euo pipefail
 
           REPO_DIR="/opt/sub2api-release"
@@ -112,12 +132,108 @@ jobs:
           upsert_env "$RUNTIME_DIR/.env" "GATEWAY_IMAGE_WORKER_TOKEN" "$BRIDGE_KEY"
           upsert_env "$RUNTIME_DIR/.env" "GATEWAY_IMAGE_WORKER_FALLBACK_ENABLED" "true"
           upsert_env "$RUNTIME_DIR/.env" "GATEWAY_RESPONSE_HEADER_TIMEOUT" "1200"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT" "0"
           upsert_env "$RUNTIME_DIR/.env" "GATEWAY_IMAGE_WORKER_TIMEOUT_SECONDS" "1200"
-          upsert_env "$RUNTIME_DIR/.env" "IMAGE_JOBS_RETENTION_DAYS" "30"
+          upsert_env "$RUNTIME_DIR/.env" "IMAGE_LOGS_CLEANUP_ENABLED" "true"
+          upsert_env "$RUNTIME_DIR/.env" "IMAGE_LOGS_RETENTION_DAYS" "10"
+          upsert_env "$RUNTIME_DIR/.env" "IMAGE_LOGS_CLEANUP_INTERVAL_SECONDS" "3600"
+          upsert_env "$RUNTIME_DIR/.env" "IMAGE_LOGS_CLEANUP_BATCH_SIZE" "500"
+          upsert_env "$RUNTIME_DIR/.env" "IMAGE_JOBS_RETENTION_DAYS" "2"
+          upsert_env "$RUNTIME_DIR/.env" "CHATGPT2API_IMAGES_RETENTION_DAYS" "3"
+
+          install -m 0755 "$DEPLOY_DIR/storage-cleanup.sh" "$RUNTIME_DIR/storage-cleanup.sh"
+          if command -v systemctl >/dev/null 2>&1; then
+            cat > /etc/systemd/system/sub2api-storage-cleanup.service <<SERVICE
+          [Unit]
+          Description=Sub2API storage cleanup
+
+          [Service]
+          Type=oneshot
+          Nice=10
+          IOSchedulingClass=idle
+          ExecStart=$RUNTIME_DIR/storage-cleanup.sh
+          SERVICE
+            cat > /etc/systemd/system/sub2api-storage-cleanup.timer <<'TIMER'
+          [Unit]
+          Description=Run Sub2API storage cleanup hourly
+
+          [Timer]
+          OnCalendar=hourly
+          Persistent=true
+
+          [Install]
+          WantedBy=timers.target
+          TIMER
+            systemctl daemon-reload
+            systemctl enable --now sub2api-storage-cleanup.timer
+          fi
 
           cd "$DEPLOY_DIR"
-          docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml -f docker-compose.build.yml build sub2api
-          docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml -f docker-compose.build.yml up -d sub2api
+          wait_for_image_jobs_idle() {
+            jobs_root="$RUNTIME_DIR/data/image_jobs"
+            if [ ! -d "$jobs_root" ]; then
+              echo "No image job directory found; continuing deployment"
+              return 0
+            fi
+            idle_checks=0
+            for attempt in $(seq 1 120); do
+              active_jobs="$({ find "$jobs_root" -name meta.json -mmin -120 -type f -exec \
+                grep -lE '"status"[[:space:]]*:[[:space:]]*"(pending|running)"' {} + 2>/dev/null || true; } | wc -l | tr -d ' ')"
+              if [ "$active_jobs" = "0" ]; then
+                idle_checks=$((idle_checks + 1))
+                if [ "$idle_checks" -ge 2 ]; then
+                  echo "Image jobs are idle; continuing deployment"
+                  return 0
+                fi
+              else
+                idle_checks=0
+                echo "Waiting for ${active_jobs} active image job(s) before restart"
+              fi
+              sleep 15
+            done
+            echo "Timed out waiting for image jobs to become idle; deployment stopped before restart"
+            return 1
+          }
+
+          wait_for_image_jobs_idle
+          rollback_available=false
+          if docker image inspect sub2api:private-prod >/dev/null 2>&1; then
+            docker tag sub2api:private-prod sub2api:private-prev
+            rollback_available=true
+          fi
+          rollback_sub2api() {
+            exit_code="$?"
+            trap - ERR
+            if [ "$rollback_available" = "true" ]; then
+              echo "Deployment failed; restoring previous Sub2API image..."
+              docker tag sub2api:private-prev sub2api:private-prod
+              docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml up -d --force-recreate sub2api || true
+              for rollback_attempt in $(seq 1 30); do
+                if curl -fsS http://127.0.0.1:18080/health >/dev/null; then
+                  echo "Previous Sub2API image restored"
+                  break
+                fi
+                sleep 2
+              done
+            fi
+            exit "$exit_code"
+          }
+          trap rollback_sub2api ERR
+
+          echo "Loading Sub2API image..."
+          docker load -i /tmp/sub2api-image.tgz
+          rm -f /tmp/sub2api-image.tgz
+          echo "Starting Sub2API container..."
+          docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml up -d sub2api
+
+          if command -v nginx >/dev/null 2>&1; then
+            cp "$DEPLOY_DIR/nginx-sub2api-prod.conf" /etc/nginx/sites-available/sub2api
+            if [ -f /etc/nginx/sites-available/sub2api-preview ]; then
+              cp "$DEPLOY_DIR/nginx-sub2api-preview-8443.conf" /etc/nginx/sites-available/sub2api-preview
+            fi
+            nginx -t
+            systemctl reload nginx
+          fi
 
           for attempt in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:18080/health >/dev/null; then
@@ -126,7 +242,7 @@ jobs:
             if [ "$attempt" = "30" ]; then
               echo "Sub2API health check failed"
               docker logs --tail 120 sub2api-private || true
-              exit 1
+              false
             fi
             sleep 2
           done
@@ -146,7 +262,7 @@ jobs:
             if [ "$status" = "404" ] || [ "$status" = "000" ]; then
               echo "Custom route probe failed: ${method} ${path} status=${status}"
               head -c 500 "$out" || true
-              exit 1
+              return 1
             fi
             echo "Custom route probe passed: ${method} ${path} status=${status}"
           }
@@ -157,6 +273,7 @@ jobs:
           probe_custom_route GET /v1/image-jobs/imgjob_probe/result
           probe_custom_route POST /v1/image-jobs/imgjob_probe/cancel
 
+          trap - ERR
           docker image prune -f >/dev/null || true
-          docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml -f docker-compose.build.yml ps
+          docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml ps
           REMOTE

@@ -80,3 +80,23 @@ func TestAdminComplianceGuardBypassesComplianceEndpoint(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Equal(t, "ok", w.Body.String())
 }
+
+func TestAdminComplianceGuardBypassesScopedAccountManager(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	svc := service.NewSettingService(&complianceGuardRepoStub{}, &config.Config{})
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set(string(ContextKeyUserRole), service.RoleAccountManager)
+		c.Next()
+	})
+	router.Use(AdminComplianceGuard(svc))
+	router.GET("/api/v1/admin/accounts", func(c *gin.Context) {
+		c.String(http.StatusOK, "ok")
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/accounts", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+}
