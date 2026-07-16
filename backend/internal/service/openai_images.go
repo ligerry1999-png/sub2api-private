@@ -71,6 +71,7 @@ type OpenAIImagesRequest struct {
 	ExplicitSize       bool
 	SizeTier           string
 	ResponseFormat     string
+	ResultDelivery     string
 	Quality            string
 	Background         string
 	OutputFormat       string
@@ -252,6 +253,7 @@ func parseOpenAIImagesJSONRequest(body []byte, req *OpenAIImagesRequest) error {
 		req.ExplicitSize = req.Size != ""
 	}
 	req.ResponseFormat = strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "response_format").String()))
+	req.ResultDelivery = strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "result_delivery").String()))
 	req.Quality = strings.TrimSpace(gjson.GetBytes(body, "quality").String())
 	req.Background = strings.TrimSpace(gjson.GetBytes(body, "background").String())
 	req.OutputFormat = strings.TrimSpace(gjson.GetBytes(body, "output_format").String())
@@ -379,6 +381,8 @@ func parseOpenAIImagesMultipartRequest(body []byte, contentType string, req *Ope
 			req.ExplicitSize = value != ""
 		case "response_format":
 			req.ResponseFormat = strings.ToLower(value)
+		case "result_delivery":
+			req.ResultDelivery = strings.ToLower(value)
 		case "stream":
 			parsed, err := strconv.ParseBool(value)
 			if err != nil {
@@ -793,17 +797,23 @@ func buildOpenAIImagesURL(base string, endpoint string) string {
 
 func rewriteOpenAIImagesModel(body []byte, contentType string, model string) ([]byte, string, error) {
 	model = strings.TrimSpace(model)
-	if model == "" {
-		return body, contentType, nil
-	}
 	mediaType, _, err := mime.ParseMediaType(contentType)
 	if err == nil && strings.EqualFold(mediaType, "multipart/form-data") {
 		rewrittenBody, rewrittenType, rewriteErr := rewriteOpenAIImagesMultipartModel(body, contentType, model)
 		return rewrittenBody, rewrittenType, rewriteErr
 	}
-	rewritten, err := sjson.SetBytes(body, "model", model)
-	if err != nil {
-		return nil, "", fmt.Errorf("rewrite image request model: %w", err)
+	rewritten := body
+	if gjson.GetBytes(rewritten, "result_delivery").Exists() {
+		rewritten, err = sjson.DeleteBytes(rewritten, "result_delivery")
+		if err != nil {
+			return nil, "", fmt.Errorf("remove image result_delivery: %w", err)
+		}
+	}
+	if model != "" {
+		rewritten, err = sjson.SetBytes(rewritten, "model", model)
+		if err != nil {
+			return nil, "", fmt.Errorf("rewrite image request model: %w", err)
+		}
 	}
 	return rewritten, contentType, nil
 }
@@ -833,6 +843,10 @@ func rewriteOpenAIImagesMultipartModel(body []byte, contentType string, model st
 		}
 
 		formName := strings.TrimSpace(part.FormName())
+		if formName == "result_delivery" && part.FileName() == "" {
+			_ = part.Close()
+			continue
+		}
 		partHeader := cloneMultipartHeader(part.Header)
 		target, err := writer.CreatePart(partHeader)
 		if err != nil {

@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -16,8 +18,14 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+)
+
+const (
+	openAIImagesResultDeliveryFileURL = "file_url"
+	openAIImagesPublicFilesPrefix     = "/image-files"
 )
 
 type openAIResponsesImageResult struct {
@@ -937,6 +945,24 @@ func buildOpenAIImagesAPIResponse(
 	firstMeta openAIResponsesImageResult,
 	responseFormat string,
 ) ([]byte, error) {
+	return buildOpenAIImagesAPIResponseWithDelivery(results, createdAt, usageRaw, firstMeta, responseFormat, nil)
+}
+
+type openAIImagesResultDeliveryOptions struct {
+	Mode    string
+	BaseURL string
+	DataDir string
+	JobID   string
+}
+
+func buildOpenAIImagesAPIResponseWithDelivery(
+	results []openAIResponsesImageResult,
+	createdAt int64,
+	usageRaw []byte,
+	firstMeta openAIResponsesImageResult,
+	responseFormat string,
+	delivery *openAIImagesResultDeliveryOptions,
+) ([]byte, error) {
 	if createdAt <= 0 {
 		createdAt = time.Now().Unix()
 	}
@@ -950,7 +976,16 @@ func buildOpenAIImagesAPIResponse(
 	for _, img := range results {
 		item := []byte(`{}`)
 		if format == "url" {
-			item, _ = sjson.SetBytes(item, "url", "data:"+openAIImageOutputMIMEType(img.OutputFormat)+";base64,"+img.Result)
+			if delivery != nil && delivery.Mode == openAIImagesResultDeliveryFileURL {
+				if publicURL, err := saveOpenAIImageResultForPublicURL(img, createdAt, delivery); err == nil && publicURL != "" {
+					item, _ = sjson.SetBytes(item, "url", publicURL)
+				} else {
+					item, _ = sjson.SetBytes(item, "url", "data:"+openAIImageOutputMIMEType(img.OutputFormat)+";base64,"+img.Result)
+					item, _ = sjson.SetBytes(item, "delivery_fallback", "base64")
+				}
+			} else {
+				item, _ = sjson.SetBytes(item, "url", "data:"+openAIImageOutputMIMEType(img.OutputFormat)+";base64,"+img.Result)
+			}
 		} else {
 			item, _ = sjson.SetBytes(item, "b64_json", img.Result)
 		}
@@ -978,6 +1013,145 @@ func buildOpenAIImagesAPIResponse(
 		out, _ = sjson.SetRawBytes(out, "usage", usageRaw)
 	}
 	return out, nil
+}
+
+func (s *OpenAIGatewayService) openAIImagesResultDeliveryOptions(c *gin.Context, parsed *OpenAIImagesRequest) *openAIImagesResultDeliveryOptions {
+	mode := normalizeOpenAIImagesResultDelivery("")
+	if parsed != nil {
+		mode = normalizeOpenAIImagesResultDelivery(parsed.ResultDelivery)
+	}
+	if mode == "" && c != nil {
+		mode = normalizeOpenAIImagesResultDelivery(c.GetHeader("X-Image-Result-Delivery"))
+	}
+	if mode != openAIImagesResultDeliveryFileURL {
+		return nil
+	}
+
+	dataDir := "./data"
+	if s != nil && s.cfg != nil && strings.TrimSpace(s.cfg.Pricing.DataDir) != "" {
+		dataDir = strings.TrimSpace(s.cfg.Pricing.DataDir)
+	}
+	return &openAIImagesResultDeliveryOptions{
+		Mode:    mode,
+		BaseURL: requestBaseURLForOpenAIImages(c),
+		DataDir: dataDir,
+		JobID:   safeOpenAIImageJobIDFromContext(c),
+	}
+}
+
+func normalizeOpenAIImagesResultDelivery(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case openAIImagesResultDeliveryFileURL:
+		return openAIImagesResultDeliveryFileURL
+	default:
+		return ""
+	}
+}
+
+func saveOpenAIImageResultForPublicURL(img openAIResponsesImageResult, createdAt int64, delivery *openAIImagesResultDeliveryOptions) (string, error) {
+	if delivery == nil || strings.TrimSpace(delivery.BaseURL) == "" {
+		return "", fmt.Errorf("missing public base url")
+	}
+	dataDir := strings.TrimSpace(delivery.DataDir)
+	if dataDir == "" {
+		dataDir = "./data"
+	}
+	raw, err := decodeOpenAIImageResultBase64(img.Result)
+	if err != nil {
+		return "", err
+	}
+	mimeType := openAIImageOutputMIMEType(img.OutputFormat)
+	ext := openAIImagesPublicFileExtension(mimeType)
+	t := time.Unix(createdAt, 0)
+	if createdAt <= 0 {
+		t = time.Now()
+	}
+	jobID := safePublicImagePathSegment(delivery.JobID)
+	if jobID == "" {
+		jobID = "imgjob_public_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	}
+	name := fmt.Sprintf("%s%s", strings.ReplaceAll(uuid.NewString(), "-", ""), ext)
+	rel := filepath.ToSlash(filepath.Join("image_jobs", jobID, "public", t.Format("2006"), t.Format("01"), t.Format("02"), name))
+	fullPath := filepath.Join(dataDir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(fullPath, raw, 0o644); err != nil {
+		return "", err
+	}
+	return strings.TrimRight(delivery.BaseURL, "/") + openAIImagesPublicFilesPrefix + "/" + rel, nil
+}
+
+func decodeOpenAIImageResultBase64(payload string) ([]byte, error) {
+	payload = strings.TrimSpace(payload)
+	if payload == "" {
+		return nil, fmt.Errorf("empty image payload")
+	}
+	if strings.HasPrefix(strings.ToLower(payload), "data:") {
+		_, body, ok := strings.Cut(payload, ",")
+		if !ok {
+			return nil, fmt.Errorf("invalid image data url")
+		}
+		payload = body
+	}
+	payload = strings.NewReplacer("\n", "", "\r", "", "\t", "", " ", "").Replace(strings.TrimSpace(payload))
+	return base64.StdEncoding.DecodeString(payload)
+}
+
+func openAIImagesPublicFileExtension(mimeType string) string {
+	switch strings.ToLower(strings.TrimSpace(mimeType)) {
+	case "image/jpeg", "image/jpg":
+		return ".jpg"
+	case "image/webp":
+		return ".webp"
+	case "image/gif":
+		return ".gif"
+	default:
+		return ".png"
+	}
+}
+
+func requestBaseURLForOpenAIImages(c *gin.Context) string {
+	if c == nil || c.Request == nil {
+		return ""
+	}
+	proto := strings.TrimSpace(c.GetHeader("X-Forwarded-Proto"))
+	if proto == "" {
+		if c.Request.TLS != nil {
+			proto = "https"
+		} else {
+			proto = "http"
+		}
+	}
+	host := strings.TrimSpace(c.GetHeader("X-Forwarded-Host"))
+	if host == "" {
+		host = c.Request.Host
+	}
+	if host == "" {
+		return ""
+	}
+	return proto + "://" + host
+}
+
+func safeOpenAIImageJobIDFromContext(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	return safePublicImagePathSegment(c.GetHeader("X-Sub2API-Image-Job-ID"))
+}
+
+func safePublicImagePathSegment(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			_, _ = b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func openAIImagesStreamPrefix(parsed *OpenAIImagesRequest) string {
@@ -1298,7 +1472,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthNonStreamingResponse(
 		firstMeta.Model = strings.TrimSpace(fallbackModel)
 	}
 
-	responseBody, err := buildOpenAIImagesAPIResponse(results, createdAt, usageRaw, firstMeta, responseFormat)
+	responseBody, err := buildOpenAIImagesAPIResponseWithDelivery(results, createdAt, usageRaw, firstMeta, responseFormat, s.openAIImagesResultDeliveryOptions(c, parsed))
 	if err != nil {
 		return OpenAIUsage{}, 0, nil, err
 	}
