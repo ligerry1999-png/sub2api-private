@@ -100,7 +100,17 @@
 - [x] 部署工作流增加当前镜像备份和失败自动回滚，服务器不执行源码构建
 - [x] 将 `golang.org/x/image` 升级到 v0.43.0，修复生图日志 WebP 解码可触发的已知崩溃漏洞
 - [x] 补充或更新私有路由、流式 Responses、图片结果交付和取消状态机回归测试
-- [ ] 仅在 GitHub Actions 运行后端/前端测试并构建镜像，不在生产服务器编译
-- [ ] 检查线上运行任务，空闲后通过手动 GitHub Actions 部署
-- [ ] 部署后验证健康、Codex 流式、GPT-5.6、同步/异步生图、公网 URL、图片日志和资源占用
-- [ ] 记录构建 run、部署 run、上线版本和一键回滚点
+- [x] 仅在 GitHub Actions 运行后端/前端测试并构建镜像，不在生产服务器编译
+- [x] 检查线上运行任务，空闲后通过手动 GitHub Actions 部署
+- [x] 部署后验证健康、Codex Responses 路由、同步/异步生图路由、公网 URL、图片日志和资源占用；GPT-5.6 与真实生图上游调用等待自然流量继续观察
+- [x] 记录构建 run、部署 run、上线版本和一键回滚点
+
+## 0.1.157 私有安全升级复盘
+
+- [x] 上线版本：`0.1.157-private.1`，代码提交：`f38eb77779d43da5026a6bae7be3a1c5cf5fe56f`
+- [x] CI run `29494354222`、Security Scan run `29494354184`、build-only run `29494359699` 均通过
+- [x] 正式部署 run `29495089391` 通过；GitHub Actions 构建约 5 分钟，服务器加载镜像与切换容器约 25 秒
+- [x] 线上 `/health` 返回 200，公开设置返回 `0.1.157-private.1`；Codex Responses、图片日志和五个异步生图私有路由均返回鉴权响应而非 404
+- [x] Nginx 配置检查通过；ChatGPT2API worker 仍为默认关闭；部署后无 5xx、无卡住的图片 job
+- [x] 回滚镜像：`sub2api:private-prev`；代码回滚分支：`backup/deployed-v151-20260716`；升级前旧主分支：`backup/pre-v157-main-20260716`
+- [x] GitHub `main` 已对齐为验证后的正式代码真源；不把服务器目录当作源码真源，也不在服务器编译
