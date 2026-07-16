@@ -318,6 +318,7 @@ func (h *OpenAIGatewayHandler) createImageJob(c *gin.Context, endpoint string) {
 	header := copyImageJobRequestHeaders(c.Request.Header)
 	header.Set("Authorization", authHeader)
 	header.Set("Content-Type", c.GetHeader("Content-Type"))
+	preserveImageJobForwardedBaseHeaders(c, header)
 	header.Set("X-Sub2API-Image-Job-ID", job.ID)
 	if requestID := strings.TrimSpace(c.GetHeader("X-Request-Id")); requestID != "" {
 		header.Set("X-Request-Id", requestID)
@@ -896,6 +897,22 @@ func copyImageJobRequestHeaders(src http.Header) http.Header {
 		}
 	}
 	return dst
+}
+
+func preserveImageJobForwardedBaseHeaders(c *gin.Context, header http.Header) {
+	if c == nil || c.Request == nil || header == nil {
+		return
+	}
+	if strings.TrimSpace(header.Get("X-Forwarded-Host")) == "" && strings.TrimSpace(c.Request.Host) != "" {
+		header.Set("X-Forwarded-Host", strings.TrimSpace(c.Request.Host))
+	}
+	if strings.TrimSpace(header.Get("X-Forwarded-Proto")) == "" {
+		if c.Request.TLS != nil {
+			header.Set("X-Forwarded-Proto", "https")
+		} else {
+			header.Set("X-Forwarded-Proto", "http")
+		}
+	}
 }
 
 func requestBaseURL(c *gin.Context) string {
