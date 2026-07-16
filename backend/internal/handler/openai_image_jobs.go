@@ -187,6 +187,53 @@ func (h *OpenAIGatewayHandler) CancelImageJob(c *gin.Context) {
 	c.JSON(status, h.imageJobPayload(c, canceledJob))
 }
 
+func (h *OpenAIGatewayHandler) ServeImageJobPublicFile(c *gin.Context) {
+	if h.imageJobStore == nil {
+		h.imageJobStore = newOpenAIImageJobStore(h.cfg)
+	}
+	rel := strings.TrimPrefix(c.Param("filepath"), "/")
+	rel = filepath.ToSlash(filepath.Clean(rel))
+	if rel == "." || strings.HasPrefix(rel, "../") || strings.Contains(rel, "/../") {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{"type": "invalid_request_error", "message": "Invalid image file path"},
+		})
+		return
+	}
+	parts := strings.Split(rel, "/")
+	if len(parts) < 3 || parts[0] != "image_jobs" || !isSafeImageJobID(parts[1]) || parts[2] != "public" || !isAllowedImageJobPublicFileExtension(rel) {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": gin.H{"type": "not_found_error", "message": "Image file not found"},
+		})
+		return
+	}
+	fullPath := filepath.Join(h.imageJobStore.dataDir(), filepath.FromSlash(rel))
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": gin.H{"type": "not_found_error", "message": "Image file not found"},
+		})
+		return
+	}
+	mimeType := http.DetectContentType(data)
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(mimeType)), "image/") {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": gin.H{"type": "not_found_error", "message": "Image file not found"},
+		})
+		return
+	}
+	c.Header("Cache-Control", "public, max-age=86400, immutable")
+	c.Data(http.StatusOK, mimeType, data)
+}
+
+func isAllowedImageJobPublicFileExtension(path string) bool {
+	switch strings.ToLower(strings.TrimSpace(filepath.Ext(path))) {
+	case ".png", ".jpg", ".jpeg", ".webp", ".gif":
+		return true
+	default:
+		return false
+	}
+}
+
 func (h *OpenAIGatewayHandler) createImageJob(c *gin.Context, endpoint string) {
 	streamStarted := false
 	defer h.recoverResponsesPanic(c, &streamStarted)
@@ -816,6 +863,13 @@ func (s *openAIImageJobStore) jobDir(jobID string) string {
 		return ""
 	}
 	return filepath.Join(s.rootDir, jobID)
+}
+
+func (s *openAIImageJobStore) dataDir() string {
+	if s == nil {
+		return "./data"
+	}
+	return filepath.Dir(s.rootDir)
 }
 
 func cloneRequestContextForImageJob(c *gin.Context, endpoint string, body []byte) *gin.Context {

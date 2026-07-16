@@ -187,6 +187,16 @@ func TestGatewayRoutesOpenAIImageJobPathsAreRegistered(t *testing.T) {
 	}
 }
 
+func TestGatewayRoutesPublicImageFilePathsAreRegistered(t *testing.T) {
+	router := newGatewayRoutesTestRouter()
+	registered := make(map[string]bool)
+	for _, route := range router.Routes() {
+		registered[route.Method+" "+route.Path] = true
+	}
+	require.True(t, registered["GET /image-files/*filepath"])
+	require.True(t, registered["HEAD /image-files/*filepath"])
+}
+
 func TestGatewayRoutesGrokImagesAndVideosPathsAreRegistered(t *testing.T) {
 	router := newGatewayRoutesTestRouter(service.PlatformGrok)
 

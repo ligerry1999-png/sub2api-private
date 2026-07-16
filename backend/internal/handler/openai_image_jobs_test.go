@@ -4,12 +4,48 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestServeImageJobPublicFile(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	dataDir := t.TempDir()
+	rel := filepath.Join("image_jobs", "imgjob_test", "public", "2026", "07", "16", "sample.png")
+	require.NoError(t, os.MkdirAll(filepath.Join(dataDir, filepath.Dir(rel)), 0o755))
+	raw := []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0}
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, rel), raw, 0o644))
+
+	h := &OpenAIGatewayHandler{imageJobStore: newOpenAIImageJobStore(&config.Config{Pricing: config.PricingConfig{DataDir: dataDir}})}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "filepath", Value: "/" + filepath.ToSlash(rel)}}
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/image-files/"+filepath.ToSlash(rel), nil)
+
+	h.ServeImageJobPublicFile(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Header().Get("Content-Type"), "image/png")
+	require.Equal(t, raw, recorder.Body.Bytes())
+}
+
+func TestServeImageJobPublicFileRejectsPrivateResult(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := &OpenAIGatewayHandler{imageJobStore: newOpenAIImageJobStore(&config.Config{Pricing: config.PricingConfig{DataDir: t.TempDir()}})}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "filepath", Value: "/image_jobs/imgjob_test/result.json"}}
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/image-files/image_jobs/imgjob_test/result.json", nil)
+
+	h.ServeImageJobPublicFile(ctx)
+	require.Equal(t, http.StatusNotFound, recorder.Code)
+}
 
 func TestClassifyOpenAIImageJobFailure(t *testing.T) {
 	tests := []struct {
