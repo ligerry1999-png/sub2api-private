@@ -107,10 +107,18 @@
 
 ## 0.1.157 私有安全升级复盘
 
-- [x] 上线版本：`0.1.157-private.1`，代码提交：`f38eb77779d43da5026a6bae7be3a1c5cf5fe56f`
+- [x] 首次上线版本：`0.1.157-private.1`，升级集成提交：`f38eb77779d43da5026a6bae7be3a1c5cf5fe56f`
 - [x] CI run `29494354222`、Security Scan run `29494354184`、build-only run `29494359699` 均通过
 - [x] 正式部署 run `29495089391` 通过；GitHub Actions 构建约 5 分钟，服务器加载镜像与切换容器约 25 秒
+- [x] 2026-07-16 随后合入公网图片结果基址修复和 7 天图片日志保留，最终线上提交为 `e680938b6c8330eb7755b0354060c99ffe3a12a1`，正式部署 run `29510177822` 通过
 - [x] 线上 `/health` 返回 200，公开设置返回 `0.1.157-private.1`；Codex Responses、图片日志和五个异步生图私有路由均返回鉴权响应而非 404
 - [x] Nginx 配置检查通过；ChatGPT2API worker 仍为默认关闭；部署后无 5xx、无卡住的图片 job
 - [x] 回滚镜像：`sub2api:private-prev`；代码回滚分支：`backup/deployed-v151-20260716`；升级前旧主分支：`backup/pre-v157-main-20260716`
 - [x] GitHub `main` 已对齐为验证后的正式代码真源；不把服务器目录当作源码真源，也不在服务器编译
+
+## 2026-07-19 维护交接收口
+
+- [x] 发现旧本地仓库 `d24570a4` 与 GitHub `main` `e680938b` 无共同祖先，保留旧目录后从 GitHub 重新克隆规范工作副本
+- [x] 新增根目录 `AGENTS.md` 和私有运维手册，补齐新任务入口、历史分叉处理、四方版本核验和生产红线
+- [x] 部署工作流改为把 GitHub SHA 写入二进制、OCI revision 标签和线上 `.release-commit`，并在切换容器前后校验三者一致
+- [ ] 待明确授权后，将维护分支合入 GitHub `main`；先运行 build-only，后续正式部署时再让提交溯源在线上生效

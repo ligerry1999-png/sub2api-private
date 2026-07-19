@@ -93,10 +93,19 @@ FROM ${POSTGRES_IMAGE} AS pg-client
 # -----------------------------------------------------------------------------
 FROM ${ALPINE_IMAGE}
 
+# Build provenance is repeated in the final stage because Docker ARG scope is
+# per-stage. CI passes the same values used for the embedded Go build info.
+ARG VERSION=
+ARG COMMIT=docker
+ARG DATE=
+
 # Labels
 LABEL maintainer="Wei-Shaw <github.com/Wei-Shaw>"
 LABEL description="Sub2API - AI API Gateway Platform"
-LABEL org.opencontainers.image.source="https://github.com/Wei-Shaw/sub2api"
+LABEL org.opencontainers.image.source="https://github.com/ligerry1999-png/sub2api-private"
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.opencontainers.image.revision="${COMMIT}"
+LABEL org.opencontainers.image.created="${DATE}"
 
 # Install runtime dependencies
 RUN apk add --no-cache \

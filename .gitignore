@@ -126,7 +126,7 @@ scripts
 .code-review-state
 #openspec/
 code-reviews/
-AGENTS.md
+# The private repository tracks AGENTS.md as its shared operator contract.
 backend/cmd/server/server
 deploy/docker-compose.override.yml
 .gocache/
@@ -136,6 +136,7 @@ docs/*
 !docs/PAYMENT_CN.md
 !docs/ADMIN_PAYMENT_INTEGRATION_API.md
 !docs/ASYNC_IMAGE_TASKS.md
+!docs/PRIVATE_OPERATIONS_RUNBOOK_CN.md
 !docs/legal/
 !docs/legal/*.md
 .serena/

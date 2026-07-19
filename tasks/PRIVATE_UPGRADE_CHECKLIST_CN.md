@@ -3,8 +3,11 @@
 ## 唯一代码真源
 
 - GitHub 私有仓库的 `main` 是正式代码真源。
+- 本地开始工作时必须用 `git ls-remote origin refs/heads/main` 读取 GitHub 实时 SHA，不能只信缓存的 `origin/main`。
+- 如果本地 HEAD 与 GitHub `main` 没有共同祖先，禁止普通 `pull`、`rebase`、`reset --hard` 或强推；归档旧目录并从 GitHub 重新克隆。
 - 服务器只运行 GitHub Actions 构建出的镜像，不在服务器修改源码或编译。
 - 每次升级从官方 release tag 建立干净分支，再逐项迁移私有功能；不要把服务器目录反向当成源码。
+- Agent 操作规则见根目录 `AGENTS.md`，完整运维流程见 `docs/PRIVATE_OPERATIONS_RUNBOOK_CN.md`。
 
 ## 必须保留的私有功能
 
@@ -25,7 +28,7 @@
 3. 检查线上没有运行中的图片任务，服务器 CPU、内存和磁盘正常。
 4. 再运行同一提交的 `Deploy Server`，选择 `deploy=true`。
 5. GitHub Actions 构建并上传镜像；服务器只执行 `docker load` 和 `docker compose up`。
-6. 验证 `/health`、版本、Codex Responses、图片接口、私有路由和资源占用。
+6. 验证 `/health`、版本、Codex Responses、图片接口、私有路由和资源占用；同时确认部署 run 的 `headSha`、线上 `.release-commit`、镜像 revision 标签和二进制 commit 完全一致。
 7. 验证成功后，把升级分支对齐到 `main`，并保留升级前备份分支作为回滚点。
 
 ## 禁止事项
@@ -33,3 +36,4 @@
 - 不在 2 核 4 GB 服务器运行 `docker build`、`docker compose build`、Go 或前端编译。
 - 不因升级删除 Postgres、Redis、账号池、密钥、图片日志或数据卷。
 - 不只看首页和 `/health`；必须探测私有路由，防止官方升级覆盖定制功能。
+- 不把“版本号相同”当作“提交相同”；缺少提交标记时必须明确证据不足，不能靠猜测宣布完全对齐。

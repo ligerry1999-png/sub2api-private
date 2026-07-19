@@ -54,7 +54,11 @@ jobs:
         run: |
           set -euo pipefail
           IMAGE_BUNDLE="/tmp/sub2api-image-${GITHUB_SHA}.tar.gz"
-          docker build -t sub2api:private-prod .
+          BUILD_VERSION="$(tr -d '\r\n' < backend/cmd/server/VERSION)"
+          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          docker build --build-arg VERSION="$BUILD_VERSION" --build-arg COMMIT="$GITHUB_SHA" --build-arg DATE="$BUILD_DATE" -t sub2api:private-prod .
+          IMAGE_COMMIT="$(docker image inspect sub2api:private-prod --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+          test "$IMAGE_COMMIT" = "$GITHUB_SHA"
           docker save sub2api:private-prod | gzip > "$IMAGE_BUNDLE"
 
       - name: Upload release bundle
@@ -64,6 +68,7 @@ jobs:
           DEPLOY_PORT="${DEPLOY_PORT:-22}"
           BUNDLE="/tmp/sub2api-release-${GITHUB_SHA}.tgz"
           IMAGE_BUNDLE="/tmp/sub2api-image-${GITHUB_SHA}.tar.gz"
+          printf '%s\n' "$GITHUB_SHA" > .release-commit
           tar --exclude='.git' -czf "$BUNDLE" .
           scp -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
             -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" "$BUNDLE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/sub2api-release.tgz"
@@ -223,6 +228,13 @@ jobs:
           echo "Loading Sub2API image..."
           docker load -i /tmp/sub2api-image.tgz
           rm -f /tmp/sub2api-image.tgz
+          release_commit="$(tr -d '\r\n' < "$REPO_DIR/.release-commit")"
+          image_commit="$(docker image inspect sub2api:private-prod --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+          if [ -z "$release_commit" ] || [ "$image_commit" != "$release_commit" ]; then
+            echo "Release/image commit mismatch: release=$release_commit image=$image_commit"
+            false
+          fi
+          echo "Verified release/image commit: $release_commit"
           echo "Starting Sub2API container..."
           docker compose --env-file "$RUNTIME_DIR/.env" -p tanzhongyu -f docker-compose.yml up -d sub2api
 
@@ -248,6 +260,12 @@ jobs:
           done
 
           echo "Sub2API health check passed"
+          binary_version_output="$(docker exec sub2api-private /app/sub2api --version 2>&1)"
+          echo "$binary_version_output"
+          if ! printf '%s\n' "$binary_version_output" | grep -F "commit: $release_commit" >/dev/null; then
+            echo "Running binary does not report release commit $release_commit"
+            false
+          fi
 
           probe_custom_route() {
             method="$1"
