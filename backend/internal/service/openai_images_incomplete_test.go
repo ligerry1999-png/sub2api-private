@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -105,7 +106,9 @@ func TestImagesOAuthNonStreaming_CompletedNoImageTriggersSameAccountRetry(t *tes
 	}
 
 	svc := &OpenAIGatewayService{}
-	_, _, _, err := svc.handleOpenAIImagesOAuthNonStreamingResponse(resp, c, "b64_json", "gpt-image-2")
+	_, _, _, err := svc.handleOpenAIImagesOAuthNonStreamingResponse(
+		resp, c, nil, nil, "b64_json", "gpt-image-2", time.Time{}, time.Time{},
+	)
 
 	if err == nil {
 		t.Fatal("completed-but-no-image should return an error")
@@ -139,7 +142,9 @@ func TestImagesOAuthNonStreaming_ContentRefusalReturns400NoRetry(t *testing.T) {
 	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(upstreamSSE))}
 
 	svc := &OpenAIGatewayService{}
-	_, _, _, err := svc.handleOpenAIImagesOAuthNonStreamingResponse(resp, c, "b64_json", "gpt-image-2")
+	_, _, _, err := svc.handleOpenAIImagesOAuthNonStreamingResponse(
+		resp, c, nil, nil, "b64_json", "gpt-image-2", time.Time{}, time.Time{},
+	)
 
 	if err == nil {
 		t.Fatal("content refusal should return an error")
