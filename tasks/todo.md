@@ -24,29 +24,29 @@
 
 ## 第一阶段：迁移护栏
 
-- [ ] 记录 `v0.1.157..origin/main` 的私有提交顺序和依赖关系
-- [ ] 确认以下私有测试在升级分支中最终存在：
+- [x] 记录 `v0.1.157..origin/main` 的私有提交顺序和依赖关系
+- [x] 确认以下私有测试在升级分支中最终存在：
   - `/v1/image-jobs/*` 路由与状态机测试
   - `result_delivery=file_url` 与默认 Base64 测试
   - ChatGPT2API 图片 worker 失败分类与切换测试
   - 图片日志、缩略图和清理测试
   - `account_manager` 权限边界测试
   - Codex Responses 流式与图片结果测试
-- [ ] 记录上游 `v0.1.165` 已有的关键修复，迁移私有代码时不得回退
-- [ ] 保持 `backend/migrations/136_image_logs.sql` 的文件名和内容不变
+- [x] 记录上游 `v0.1.165` 已有的关键修复，迁移私有代码时不得回退
+- [x] 保持 `backend/migrations/136_image_logs.sql` 的文件名和内容不变
 - [ ] 增加从生产式 v0.1.157 数据库升级到 v0.1.165 的迁移演练
 - [ ] 验证数据库升级后旧 v0.1.157 镜像能否安全回滚
 
 ## 第二阶段：逐批迁移私有功能
 
-- [ ] 图片 worker 桥接与失败切换
-- [ ] 图片日志、缩略图和 7 天清理
-- [ ] 私有 `/v1/image-jobs/*`、失败分类和取消接口
-- [ ] `account_manager` 受限账号管理员角色
-- [ ] `result_delivery=file_url` 与默认 Base64 兼容
-- [ ] Team/Workspace 信息、自定义模型和 Codex 兼容补丁
-- [ ] Nginx 大图上传、存储清理和 GitHub Actions 部署保护
-- [ ] 构建提交溯源和维护文档
+- [x] 图片 worker 桥接与失败切换
+- [x] 图片日志、缩略图和 7 天清理
+- [x] 私有 `/v1/image-jobs/*`、失败分类和取消接口
+- [x] `account_manager` 受限账号管理员角色
+- [x] `result_delivery=file_url` 与默认 Base64 兼容
+- [x] Team/Workspace 信息、自定义模型和 Codex 兼容补丁
+- [x] Nginx 大图上传、存储清理和 GitHub Actions 部署保护
+- [x] 构建提交溯源和维护文档
 
 ## 第三阶段：对象存储私有适配
 
@@ -59,16 +59,18 @@
 
 ## 第四阶段：验证
 
-- [ ] `git diff --check`
-- [ ] Go 相关轻量测试
-- [ ] 前端类型检查和相关测试
-- [ ] 私有路由注册检查
-- [ ] 对比官方 `v0.1.165`，确认关键上游修复没有被旧私有代码覆盖
-- [ ] 推送升级分支
-- [ ] GitHub Actions 后端 CI 与安全扫描
+- [x] `git diff --check`
+- [x] Go 相关轻量测试和完整单元测试
+- [x] 前端类型检查
+- [x] 前端相关测试
+- [x] 私有路由注册检查
+- [x] 对比官方 `v0.1.165`，确认关键上游修复没有被旧私有代码覆盖
+- [x] 推送升级分支
+- [ ] GitHub Actions 后端 CI
+- [x] GitHub Actions 安全扫描
 - [ ] `Deploy Server` 使用 `deploy=false` 完成构建验证
-- [ ] 正式部署前生成可验证的 PostgreSQL 备份，不能只创建空备份目录
-- [ ] 明确数据库迁移失败和新镜像健康失败时的恢复步骤
+- [x] 部署脚本在重启前生成并校验真实 PostgreSQL 自定义格式备份
+- [x] 明确新镜像健康失败时的旧镜像恢复步骤；正式执行仍以数据库演练通过为前提
 
 ## 第五阶段：部署门禁
 
@@ -79,4 +81,4 @@
 
 ## Review
 
-尚未进入部署阶段。
+功能迁移已完成，尚未进入数据库演练和部署阶段。

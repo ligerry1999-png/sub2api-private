@@ -28,27 +28,30 @@ func TestEveryGatewayPOSTRouteIsClassifiedForPromptAuditCoverage(t *testing.T) {
 	}
 
 	audited := map[string][]string{
-		"/messages":                 {"gateway_handler.go", "openai_gateway_handler.go"},
-		"/responses":                {"gateway_handler_responses.go", "openai_gateway_handler.go"},
-		"/responses/*subpath":       {"gateway_handler_responses.go", "openai_gateway_handler.go"},
-		"/chat/completions":         {"gateway_handler_chat_completions.go", "openai_chat_completions.go"},
-		"/embeddings":               {"openai_embeddings.go"},
-		"/alpha/search":             {"openai_alpha_search.go"},
-		"/live":                     {"openai_live.go"},
-		"/realtime/calls":           {"openai_live.go"},
-		"/images/generations":       {"openai_images.go", "grok_media.go"},
-		"/images/edits":             {"openai_images.go", "grok_media.go"},
-		"/images/generations/async": {"image_task_handler.go"},
-		"/images/edits/async":       {"image_task_handler.go"},
-		"/images/batches":           {"batch_image_handler.go"},
-		"/videos/generations":       {"grok_media.go"},
-		"/videos/edits":             {"grok_media.go"},
-		"/videos/extensions":        {"grok_media.go"},
-		"/models/*modelAction":      {"gemini_v1beta_handler.go"},
+		"/messages":                      {"gateway_handler.go", "openai_gateway_handler.go"},
+		"/responses":                     {"gateway_handler_responses.go", "openai_gateway_handler.go"},
+		"/responses/*subpath":            {"gateway_handler_responses.go", "openai_gateway_handler.go"},
+		"/chat/completions":              {"gateway_handler_chat_completions.go", "openai_chat_completions.go"},
+		"/embeddings":                    {"openai_embeddings.go"},
+		"/alpha/search":                  {"openai_alpha_search.go"},
+		"/live":                          {"openai_live.go"},
+		"/realtime/calls":                {"openai_live.go"},
+		"/images/generations":            {"openai_images.go", "grok_media.go"},
+		"/images/edits":                  {"openai_images.go", "grok_media.go"},
+		"/images/generations/async":      {"image_task_handler.go"},
+		"/images/edits/async":            {"image_task_handler.go"},
+		"/image-jobs/images/generations": {"openai_image_jobs.go"},
+		"/image-jobs/images/edits":       {"openai_image_jobs.go"},
+		"/images/batches":                {"batch_image_handler.go"},
+		"/videos/generations":            {"grok_media.go"},
+		"/videos/edits":                  {"grok_media.go"},
+		"/videos/extensions":             {"grok_media.go"},
+		"/models/*modelAction":           {"gemini_v1beta_handler.go"},
 	}
 	excluded := map[string]string{
 		"/messages/count_tokens":     "tokenization only; it does not execute a model request",
 		"/images/batches/:id/cancel": "control-plane cancellation with no user prompt",
+		"/image-jobs/:job_id/cancel": "control-plane cancellation with no user prompt",
 	}
 
 	unclassified := make([]string, 0)

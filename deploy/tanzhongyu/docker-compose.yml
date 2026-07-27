@@ -8,7 +8,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./data:/app/data
+      - ${SUB2API_DATA_DIR:-./data}:/app/data
     environment:
       - AUTO_SETUP=true
       - SERVER_HOST=0.0.0.0
@@ -36,6 +36,7 @@ services:
       - SECURITY_URL_ALLOWLIST_ALLOW_PRIVATE_HOSTS=${SECURITY_URL_ALLOWLIST_ALLOW_PRIVATE_HOSTS:-false}
       - GATEWAY_FORCE_CODEX_CLI=${GATEWAY_FORCE_CODEX_CLI:-true}
       - GATEWAY_RESPONSE_HEADER_TIMEOUT=${GATEWAY_RESPONSE_HEADER_TIMEOUT:-1200}
+      - GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT=${GATEWAY_OPENAI_RESPONSE_HEADER_TIMEOUT:-0}
       - GATEWAY_IMAGE_CONCURRENCY_ENABLED=${GATEWAY_IMAGE_CONCURRENCY_ENABLED:-false}
       - GATEWAY_IMAGE_CONCURRENCY_MAX_CONCURRENT_REQUESTS=${GATEWAY_IMAGE_CONCURRENCY_MAX_CONCURRENT_REQUESTS:-0}
       - GATEWAY_IMAGE_WORKER_ENABLED=${GATEWAY_IMAGE_WORKER_ENABLED:-false}
@@ -43,9 +44,9 @@ services:
       - GATEWAY_IMAGE_WORKER_TOKEN=${GATEWAY_IMAGE_WORKER_TOKEN:-}
       - GATEWAY_IMAGE_WORKER_FALLBACK_ENABLED=${GATEWAY_IMAGE_WORKER_FALLBACK_ENABLED:-true}
       - GATEWAY_IMAGE_WORKER_TIMEOUT_SECONDS=${GATEWAY_IMAGE_WORKER_TIMEOUT_SECONDS:-1200}
-      - IMAGE_JOBS_RETENTION_DAYS=${IMAGE_JOBS_RETENTION_DAYS:-30}
+      - IMAGE_JOBS_RETENTION_DAYS=${IMAGE_JOBS_RETENTION_DAYS:-2}
       - IMAGE_LOGS_CLEANUP_ENABLED=${IMAGE_LOGS_CLEANUP_ENABLED:-true}
-      - IMAGE_LOGS_RETENTION_DAYS=${IMAGE_LOGS_RETENTION_DAYS:-30}
+      - IMAGE_LOGS_RETENTION_DAYS=${IMAGE_LOGS_RETENTION_DAYS:-7}
       - IMAGE_LOGS_CLEANUP_INTERVAL_SECONDS=${IMAGE_LOGS_CLEANUP_INTERVAL_SECONDS:-3600}
       - IMAGE_LOGS_CLEANUP_BATCH_SIZE=${IMAGE_LOGS_CLEANUP_BATCH_SIZE:-500}
     depends_on:
@@ -67,7 +68,7 @@ services:
     container_name: sub2api-private-postgres
     restart: unless-stopped
     volumes:
-      - ./postgres_data:/var/lib/postgresql/data
+      - ${SUB2API_POSTGRES_DATA_DIR:-./postgres_data}:/var/lib/postgresql/data
     environment:
       - POSTGRES_USER=${POSTGRES_USER:-sub2api}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
@@ -88,7 +89,7 @@ services:
     container_name: sub2api-private-redis
     restart: unless-stopped
     volumes:
-      - ./redis_data:/data
+      - ${SUB2API_REDIS_DATA_DIR:-./redis_data}:/data
     command: >
       sh -c 'redis-server --save 60 1 --appendonly yes ${REDIS_PASSWORD:+--requirepass "$REDIS_PASSWORD"}'
     environment:
