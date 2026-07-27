@@ -121,4 +121,15 @@
 - [x] 发现旧本地仓库 `d24570a4` 与 GitHub `main` `e680938b` 无共同祖先，保留旧目录后从 GitHub 重新克隆规范工作副本
 - [x] 新增根目录 `AGENTS.md` 和私有运维手册，补齐新任务入口、历史分叉处理、四方版本核验和生产红线
 - [x] 部署工作流改为把 GitHub SHA 写入二进制、OCI revision 标签和线上 `.release-commit`，并在切换容器前后校验三者一致
-- [ ] 待明确授权后，将维护分支合入 GitHub `main`；先运行 build-only，后续正式部署时再让提交溯源在线上生效
+- [x] 2026-07-27 将维护分支推送到私有 GitHub，保留构建溯源和生图接入文档
+- [ ] 将维护分支合入 GitHub `main`；合入前先运行 build-only，后续正式部署时再让提交溯源在线上生效
+
+## 2026-07-27 Sub2API v0.1.165 私有升级准备
+
+- [x] 配置只读官方远端 `upstream`，核验官方稳定标签 `v0.1.165`
+- [x] 从 `v0.1.165` 的 `e9a58c1cb8b5ef626a75c93b4d953fde5e67aa29` 建立独立工作目录和 `upgrade/v0.1.165-private` 分支
+- [x] 将升级起点推送到私有 GitHub；该分支当前与官方标签完全一致，不能部署
+- [x] 记录公开对象存储和私有 `/v1/image-jobs/*` 的接口边界
+- [ ] 按 `tasks/PRIVATE_UPGRADE_CHECKLIST_CN.md` 逐项迁移私有功能
+- [ ] 完成依赖安全修复、Codex/Responses 兼容修复和对象存储私有适配
+- [ ] 运行 CI、安全扫描和 `deploy=false`，未经单独授权不执行 `deploy=true`

@@ -43,6 +43,17 @@ git worktree list
 
 只能从已核验的官方稳定标签创建升级分支，不能从公开 `main` 创建。
 
+2026-07-27 已建立本轮隔离升级工作区：
+
+~~~text
+工作目录：/Users/bricoleur/Documents/小红书 cil/sub2api-upgrade-v0.1.165-private
+分支：upgrade/v0.1.165-private
+官方标签：v0.1.165
+基线提交：e9a58c1cb8b5ef626a75c93b4d953fde5e67aa29
+~~~
+
+该分支当前必须保持和官方标签完全一致，只是升级起点，不是可部署的私有成品。私有能力迁移、测试、build-only 和部署授权仍需分别完成。
+
 ## 3. 本地与 GitHub 出现分叉时
 
 先获取远端引用：
