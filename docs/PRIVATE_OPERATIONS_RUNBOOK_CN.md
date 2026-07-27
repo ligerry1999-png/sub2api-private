@@ -11,6 +11,13 @@
 
 私有功能清单见 ../tasks/PRIVATE_UPGRADE_CHECKLIST_CN.md。服务器地址、SSH 私钥位置和工作区入口见工作区 SUB2API_SERVER_HANDOFF.md。
 
+本地远端命名固定为：
+
+- `origin`：私有 GitHub 仓库，是正式代码来源。
+- `upstream`：公开仓库，只用于获取 release tag 和查看差异，禁止直接推送。
+
+完整版本升级使用独立 Git worktree（独立工作目录）：它是在同一个 Git 仓库旁边创建一套互不干扰的文件。它的作用是让维护分支中的未提交内容不会混入官方升级基线。
+
 ## 2. 新任务开场检查
 
 先读 AGENTS.md 和工作区交接文件，再运行：
@@ -26,6 +33,15 @@ git log -5 --oneline --decorate
 ~~~
 
 git ls-remote 才是 GitHub 实时值；origin/main 只是上次 fetch 后的本地缓存。
+
+开始官方升级前还要确认：
+
+~~~bash
+git ls-remote upstream refs/tags/v0.1.165
+git worktree list
+~~~
+
+只能从已核验的官方稳定标签创建升级分支，不能从公开 `main` 创建。
 
 ## 3. 本地与 GitHub 出现分叉时
 
