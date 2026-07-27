@@ -802,13 +802,19 @@ func TestOllamaCloudUsageRefreshSingleflightAndRunnerDeduplicateSharedGroup(t *t
 	}}
 	svc := newOllamaUsageTestService(t, repo, upstream, settingsRepo, true)
 
-	errs := make(chan error, 2)
-	go func() { _, err := svc.Refresh(context.Background(), first.ID); errs <- err }()
+	firstErr := make(chan error, 1)
+	secondErr := make(chan error, 1)
+	go func() { _, err := svc.Refresh(context.Background(), first.ID); firstErr <- err }()
 	<-started
-	go func() { _, err := svc.Refresh(context.Background(), second.ID); errs <- err }()
+	go func() { _, err := svc.Refresh(context.Background(), second.ID); secondErr <- err }()
 	close(release)
-	require.NoError(t, <-errs)
-	require.NoError(t, <-errs)
+	require.NoError(t, <-firstErr)
+	// If the second goroutine enters singleflight before the first one completes,
+	// it shares the successful result. If the scheduler runs it just afterward,
+	// the persisted snapshot correctly activates the manual-refresh cooldown.
+	if err := <-secondErr; err != nil {
+		require.ErrorIs(t, err, ErrOllamaCloudUsageRefreshRateLimited)
+	}
 	require.Equal(t, int64(1), upstream.calls.Load())
 	require.NotNil(t, decodeOllamaCloudUsageSnapshot(first.Extra))
 	require.Equal(t, decodeOllamaCloudUsageSnapshot(first.Extra), decodeOllamaCloudUsageSnapshot(second.Extra))
