@@ -402,7 +402,7 @@ func (h *OpenAIGatewayHandler) forwardImageJob(ctx context.Context, endpoint str
 	if err != nil {
 		return openAIImageJobResult{err: err}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	limit := openAIImageJobResultReadLimit(h.cfg)
 	respBody, readErr := io.ReadAll(io.LimitReader(resp.Body, limit+1))
