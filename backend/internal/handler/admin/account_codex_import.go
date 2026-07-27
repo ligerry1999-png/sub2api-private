@@ -81,6 +81,8 @@ type codexImportAccount struct {
 	UserID          string
 	PlanType        string
 	Organization    string
+	AccountName     string
+	AccountStruct   string
 	AgentRuntimeID  string
 	AgentPrivateKey string
 	AgentTaskID     string
@@ -585,6 +587,21 @@ func normalizeCodexImportEntry(entry codexImportEntry) (*codexImportAccount, err
 			[]string{"org_id"},
 			[]string{"orgId"},
 		)
+		item.AccountName = firstCodexString(raw,
+			[]string{"account_name"},
+			[]string{"accountName"},
+			[]string{"workspace_name"},
+			[]string{"workspaceName"},
+			[]string{"account", "name"},
+			[]string{"account", "title"},
+		)
+		item.AccountStruct = firstCodexString(raw,
+			[]string{"account_structure"},
+			[]string{"accountStructure"},
+			[]string{"workspace_type"},
+			[]string{"workspaceType"},
+			[]string{"account", "structure"},
+		)
 		item.Name = firstCodexString(raw, []string{"name"}, []string{"user", "name"})
 		authProvider := firstCodexString(raw, []string{"auth_provider"}, []string{"authProvider"})
 		if authProvider != "" {
@@ -648,6 +665,8 @@ func normalizeCodexImportEntry(entry codexImportEntry) (*codexImportAccount, err
 	setCodexCredentialIfNotEmpty(item.Credentials, "chatgpt_user_id", item.UserID)
 	setCodexCredentialIfNotEmpty(item.Credentials, "organization_id", item.Organization)
 	setCodexCredentialIfNotEmpty(item.Credentials, "plan_type", item.PlanType)
+	setCodexCredentialIfNotEmpty(item.Credentials, "account_name", item.AccountName)
+	setCodexCredentialIfNotEmpty(item.Credentials, "account_structure", item.AccountStruct)
 
 	fingerprint := codexTokenFingerprint(item.AccessToken)
 	item.Extra["access_token_sha256"] = fingerprint
@@ -707,6 +726,17 @@ func enrichCodexImportAccountFromJWT(item *codexImportAccount, token string, val
 	}
 	if item.Organization == "" && len(claims.OpenAIAuth.Organizations) > 0 {
 		item.Organization = claims.OpenAIAuth.Organizations[0].ID
+	}
+	if item.AccountName == "" {
+		for _, org := range claims.OpenAIAuth.Organizations {
+			if org.IsDefault && strings.TrimSpace(org.Title) != "" {
+				item.AccountName = strings.TrimSpace(org.Title)
+				break
+			}
+		}
+	}
+	if item.AccountName == "" && len(claims.OpenAIAuth.Organizations) > 0 {
+		item.AccountName = strings.TrimSpace(claims.OpenAIAuth.Organizations[0].Title)
 	}
 	if item.UserID == "" {
 		item.UserID = strings.TrimSpace(claims.Sub)
@@ -857,6 +887,8 @@ func sanitizeCodexImportCredentialExtras(input map[string]any) map[string]any {
 		"chatgpt_user_id":            {},
 		"organization_id":            {},
 		"plan_type":                  {},
+		"account_name":               {},
+		"account_structure":          {},
 		"client_id":                  {},
 		"auth_mode":                  {},
 		"openai_auth_mode":           {},

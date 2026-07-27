@@ -258,7 +258,11 @@
                   :auth-mode="getOpenAIAuthMode(row)"
                   :plan-type="getAccountPlanType(row)"
                   :privacy-mode="row.extra?.privacy_mode || row.parent_privacy_mode"
-                  :subscription-expires-at="row.credentials?.subscription_expires_at || row.parent_subscription_expires_at" />
+                  :subscription-expires-at="row.credentials?.subscription_expires_at || row.parent_subscription_expires_at"
+                  :account-name="openAIAccountSpaceName(row)"
+                  :account-structure="openAIAccountStructure(row)"
+                  :chatgpt-account-id="asString(row.credentials?.chatgpt_account_id)"
+                  :organization-id="asString(row.credentials?.organization_id)" />
                 <span
                   v-if="getAntigravityTierLabel(row)"
                   :class="['inline-block rounded px-1.5 py-0.5 text-[10px] font-medium', getAntigravityTierClass(row)]"
@@ -1297,6 +1301,38 @@ function getOpenAIAuthMode(row: any): string | undefined {
   if (!row || row.platform !== 'openai' || row.type !== 'oauth') return undefined
   const authMode = row.credentials?.auth_mode
   return typeof authMode === 'string' && authMode.trim() ? authMode : undefined
+}
+
+const asString = (value: unknown): string | undefined => {
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    return trimmed || undefined
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value)
+  }
+  return undefined
+}
+
+const openAIAccountSpaceName = (row: Account): string | undefined => {
+  if (row.platform !== 'openai') return undefined
+  const credentials = row.credentials ?? {}
+  const extra = row.extra ?? {}
+  return (
+    asString(credentials.account_name) ||
+    asString(credentials.workspace_name) ||
+    asString(credentials.organization_title) ||
+    asString(extra.account_name) ||
+    asString(extra.workspace_name) ||
+    asString(extra.organization_title)
+  )
+}
+
+const openAIAccountStructure = (row: Account): string | undefined => {
+  if (row.platform !== 'openai') return undefined
+  const credentials = row.credentials ?? {}
+  const extra = row.extra ?? {}
+  return asString(credentials.account_structure) || asString(extra.account_structure)
 }
 
 // Antigravity 订阅等级辅助函数
