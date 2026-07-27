@@ -1682,7 +1682,7 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatibleReason(ctx con
 		return false, "proxy_stream_quarantined"
 	}
 	if req.RequiredImageCapability != "" && s != nil && s.service != nil && s.service.isOpenAIImageWorkerCoolingDown(account) {
-		return false
+		return false, "image_worker_cooling_down"
 	}
 	// Quota auto-pause must be evaluated during the initial filter too. Without it the
 	// TopK candidate pool can be filled with paused accounts and the later fresh/DB
