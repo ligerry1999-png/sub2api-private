@@ -7,10 +7,26 @@ import (
 	"testing"
 	"time"
 
+	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/stretchr/testify/require"
 )
+
+func resetSimpleModeDefaultGroupsFixture(t *testing.T, client *dbent.Client, ctx context.Context) {
+	t.Helper()
+
+	// The repository integration package shares one database across tests.
+	// Rebuild the minimal post-migration state inside this test's transaction so
+	// prior tests cannot make a fresh-install case look initialized.
+	_, err := client.ExecContext(ctx, "TRUNCATE users, accounts, groups RESTART IDENTITY CASCADE")
+	require.NoError(t, err)
+	_, err = client.ExecContext(ctx, `
+		INSERT INTO groups (name, description, created_at, updated_at)
+		VALUES ('default', 'Default group', NOW(), NOW())
+	`)
+	require.NoError(t, err)
+}
 
 func TestEnsureSimpleModeDefaultGroups_CreatesMissingDefaults(t *testing.T) {
 	ctx := context.Background()
@@ -19,6 +35,7 @@ func TestEnsureSimpleModeDefaultGroups_CreatesMissingDefaults(t *testing.T) {
 
 	seedCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	resetSimpleModeDefaultGroupsFixture(t, client, seedCtx)
 
 	require.NoError(t, ensureSimpleModeDefaultGroups(seedCtx, client))
 
@@ -48,6 +65,7 @@ func TestEnsureSimpleModeDefaultGroups_PreservesExistingInstallation(t *testing.
 
 	seedCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	resetSimpleModeDefaultGroupsFixture(t, client, seedCtx)
 
 	mustCreateGroup(t, client, &service.Group{
 		Name:     "operator-openai-" + time.Now().Format(time.RFC3339Nano),
@@ -84,6 +102,7 @@ func TestEnsureSimpleModeDefaultGroups_PreservesInitializedLegacySeed(t *testing
 
 	seedCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	resetSimpleModeDefaultGroupsFixture(t, client, seedCtx)
 
 	mustCreateUser(t, client, &service.User{})
 
@@ -105,6 +124,7 @@ func TestEnsureSimpleModeDefaultGroups_BackfillsOnlyAutoCreatedGrokDefault(t *te
 
 	seedCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	resetSimpleModeDefaultGroupsFixture(t, client, seedCtx)
 
 	autoDefault, err := client.Group.Create().
 		SetName(service.PlatformGrok + "-default").
@@ -165,6 +185,7 @@ func TestEnsureSimpleModeDefaultGroups_PreservesExplicitFalse(t *testing.T) {
 			defer cancel()
 
 			client := testEntTx(t).Client()
+			resetSimpleModeDefaultGroupsFixture(t, client, ctx)
 			grokDefault, err := client.Group.Create().
 				SetName(service.PlatformGrok + "-default").
 				SetDescription(tt.description).
@@ -193,6 +214,7 @@ func TestEnsureSimpleModeDefaultGroups_PreservesSoftDeletedGroupHistory(t *testi
 
 	seedCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	resetSimpleModeDefaultGroupsFixture(t, client, seedCtx)
 
 	// Create and then soft-delete an anthropic default group.
 	g, err := client.Group.Create().
@@ -224,6 +246,7 @@ func TestEnsureSimpleModeDefaultGroups_AntigravityNeedsTwoGroupsOnlyByCount(t *t
 
 	seedCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	resetSimpleModeDefaultGroupsFixture(t, client, seedCtx)
 
 	mustCreateGroup(t, client, &service.Group{Name: "ag-custom-1-" + time.Now().Format(time.RFC3339Nano), Platform: service.PlatformAntigravity})
 	mustCreateGroup(t, client, &service.Group{Name: "ag-custom-2-" + time.Now().Format(time.RFC3339Nano), Platform: service.PlatformAntigravity})
