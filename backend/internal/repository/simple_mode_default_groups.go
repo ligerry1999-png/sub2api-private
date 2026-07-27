@@ -6,6 +6,7 @@ import (
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
 	"github.com/Wei-Shaw/sub2api/ent/group"
+	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -18,6 +19,14 @@ func ensureSimpleModeDefaultGroups(ctx context.Context, client *dbent.Client) er
 
 	if err := backfillSimpleModeGrokDefaultImageGeneration(ctx, client); err != nil {
 		return err
+	}
+
+	shouldSeed, err := shouldSeedSimpleModeDefaultGroups(ctx, client)
+	if err != nil {
+		return err
+	}
+	if !shouldSeed {
+		return nil
 	}
 
 	requiredByPlatform := map[string]int{
@@ -56,6 +65,52 @@ func ensureSimpleModeDefaultGroups(ctx context.Context, client *dbent.Client) er
 	}
 
 	return nil
+}
+
+// shouldSeedSimpleModeDefaultGroups only permits default-group creation for a
+// genuinely fresh database. Migration 008 creates one legacy seed group named
+// "default", so that exact row is treated as an empty-install marker. Any other
+// group history means an operator has already shaped routing and must be left
+// untouched during upgrades.
+func shouldSeedSimpleModeDefaultGroups(ctx context.Context, client *dbent.Client) (bool, error) {
+	count, err := client.Group.Query().Count(mixins.SkipSoftDelete(ctx))
+	if err != nil {
+		return false, fmt.Errorf("count groups before seeding simple mode defaults: %w", err)
+	}
+	if count == 0 {
+		return true, nil
+	}
+	if count != 1 {
+		return false, nil
+	}
+
+	isInitialSeed, err := client.Group.Query().
+		Where(
+			group.NameEQ("default"),
+			group.DescriptionEQ("Default group"),
+			group.DeletedAtIsNil(),
+		).
+		Exist(ctx)
+	if err != nil {
+		return false, fmt.Errorf("check initial default group before seeding simple mode defaults: %w", err)
+	}
+	if !isInitialSeed {
+		return false, nil
+	}
+
+	hasUsers, err := client.User.Query().Exist(mixins.SkipSoftDelete(ctx))
+	if err != nil {
+		return false, fmt.Errorf("check user history before seeding simple mode defaults: %w", err)
+	}
+	if hasUsers {
+		return false, nil
+	}
+
+	hasAccounts, err := client.Account.Query().Exist(mixins.SkipSoftDelete(ctx))
+	if err != nil {
+		return false, fmt.Errorf("check account history before seeding simple mode defaults: %w", err)
+	}
+	return !hasAccounts, nil
 }
 
 func createGroupIfNotExists(ctx context.Context, client *dbent.Client, name, platform string) error {

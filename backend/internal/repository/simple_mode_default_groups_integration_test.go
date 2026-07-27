@@ -41,6 +41,63 @@ func TestEnsureSimpleModeDefaultGroups_CreatesMissingDefaults(t *testing.T) {
 	require.True(t, grokDefault.AllowImageGeneration)
 }
 
+func TestEnsureSimpleModeDefaultGroups_PreservesExistingInstallation(t *testing.T) {
+	ctx := context.Background()
+	tx := testEntTx(t)
+	client := tx.Client()
+
+	seedCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	mustCreateGroup(t, client, &service.Group{
+		Name:     "operator-openai-" + time.Now().Format(time.RFC3339Nano),
+		Platform: service.PlatformOpenAI,
+	})
+
+	beforeCount, err := client.Group.Query().Count(seedCtx)
+	require.NoError(t, err)
+	require.NoError(t, ensureSimpleModeDefaultGroups(seedCtx, client))
+
+	afterCount, err := client.Group.Query().Count(seedCtx)
+	require.NoError(t, err)
+	require.Equal(t, beforeCount, afterCount, "an existing installation must not receive new default groups")
+
+	defaultNames := []string{
+		service.PlatformAnthropic + "-default",
+		service.PlatformOpenAI + "-default",
+		service.PlatformGemini + "-default",
+		service.PlatformGrok + "-default",
+		service.PlatformAntigravity + "-default-1",
+		service.PlatformAntigravity + "-default-2",
+	}
+	for _, name := range defaultNames {
+		exists, err := client.Group.Query().Where(group.NameEQ(name), group.DeletedAtIsNil()).Exist(seedCtx)
+		require.NoError(t, err)
+		require.False(t, exists, "existing installation unexpectedly received group %s", name)
+	}
+}
+
+func TestEnsureSimpleModeDefaultGroups_PreservesInitializedLegacySeed(t *testing.T) {
+	ctx := context.Background()
+	tx := testEntTx(t)
+	client := tx.Client()
+
+	seedCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	mustCreateUser(t, client, &service.User{})
+
+	beforeCount, err := client.Group.Query().Count(seedCtx)
+	require.NoError(t, err)
+	require.Equal(t, 1, beforeCount, "fixture should contain only migration 008's legacy seed group")
+
+	require.NoError(t, ensureSimpleModeDefaultGroups(seedCtx, client))
+
+	afterCount, err := client.Group.Query().Count(seedCtx)
+	require.NoError(t, err)
+	require.Equal(t, beforeCount, afterCount, "initialized installation must not receive new default groups")
+}
+
 func TestEnsureSimpleModeDefaultGroups_BackfillsOnlyAutoCreatedGrokDefault(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
@@ -129,7 +186,7 @@ func TestEnsureSimpleModeDefaultGroups_PreservesExplicitFalse(t *testing.T) {
 	}
 }
 
-func TestEnsureSimpleModeDefaultGroups_IgnoresSoftDeletedGroups(t *testing.T) {
+func TestEnsureSimpleModeDefaultGroups_PreservesSoftDeletedGroupHistory(t *testing.T) {
 	ctx := context.Background()
 	tx := testEntTx(t)
 	client := tx.Client()
@@ -153,10 +210,11 @@ func TestEnsureSimpleModeDefaultGroups_IgnoresSoftDeletedGroups(t *testing.T) {
 
 	require.NoError(t, ensureSimpleModeDefaultGroups(seedCtx, client))
 
-	// New active one should exist.
+	// Soft-deleted history still proves that this is not a fresh installation.
+	// Do not silently recreate a group the operator deliberately removed.
 	count, err := client.Group.Query().Where(group.NameEQ(service.PlatformAnthropic+"-default"), group.DeletedAtIsNil()).Count(seedCtx)
 	require.NoError(t, err)
-	require.Equal(t, 1, count)
+	require.Equal(t, 0, count)
 }
 
 func TestEnsureSimpleModeDefaultGroups_AntigravityNeedsTwoGroupsOnlyByCount(t *testing.T) {
