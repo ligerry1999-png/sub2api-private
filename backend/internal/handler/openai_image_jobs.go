@@ -287,8 +287,8 @@ func (h *OpenAIGatewayHandler) createImageJob(c *gin.Context, endpoint string) {
 		h.errorResponse(c, http.StatusForbidden, "permission_error", service.ImageGenerationPermissionMessage())
 		return
 	}
-	if decision := h.checkContentModeration(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIImages, parsed.Model, parsed.ModerationBody()); decision != nil && decision.Blocked {
-		h.errorResponse(c, contentModerationStatus(decision), contentModerationErrorCode(decision), decision.Message)
+	if decision := h.checkSecurityAudit(c, reqLog, apiKey, subject, service.ContentModerationProtocolOpenAIImages, parsed.Model, parsed.ModerationBody()); decision != nil && !decision.AllowNextStage {
+		h.openAISecurityAuditError(c, decision)
 		return
 	}
 

@@ -79,7 +79,7 @@ func TestAdminService_UpdateUser_AllowsAccountManagerRole(t *testing.T) {
 	}
 
 	role := RoleAccountManager
-	updated, err := svc.UpdateUser(context.Background(), 42, &UpdateUserInput{Role: &role})
+	updated, err := svc.UpdateUser(context.Background(), 42, &UpdateUserInput{Role: role})
 
 	require.NoError(t, err)
 	require.Equal(t, RoleAccountManager, updated.Role)
