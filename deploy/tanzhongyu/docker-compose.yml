@@ -3,6 +3,8 @@ services:
     image: ${SUB2API_IMAGE:-weishaw/sub2api:latest}
     container_name: sub2api-private
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "${BIND_HOST:-127.0.0.1}:${SERVER_PORT:-18080}:8080"
     extra_hosts:
