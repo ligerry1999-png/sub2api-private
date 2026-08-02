@@ -144,6 +144,11 @@ func TestBuildGrokMediaURLs(t *testing.T) {
 
 	_, err = BuildVideoURL(DefaultBaseURL, " ")
 	require.Error(t, err)
+
+	for _, unsafeRequestID := range []string{".", "..", "req\x00id", "req\rid", "req\nid"} {
+		_, err = BuildVideoURL(DefaultBaseURL, unsafeRequestID)
+		require.Error(t, err, "unsafe request id %q must be rejected", unsafeRequestID)
+	}
 }
 
 func TestValidateXAIURLsRejectUntrustedOAuthAndUnsafeBaseURLsByDefault(t *testing.T) {

@@ -536,8 +536,11 @@ func (c *GeminiBatchHTTPClient) CreateBatch(ctx context.Context, apiKey string, 
 		},
 	}
 	payload, _ := json.Marshal(body)
-	path := fmt.Sprintf("/v1beta/models/%s:batchGenerateContent", url.PathEscape(strings.TrimSpace(model)))
-	req, err := c.newRequest(ctx, http.MethodPost, path, apiKey, bytes.NewReader(payload))
+	targetURL, err := buildGeminiAIStudioModelActionURL(c.baseURL, model, "batchGenerateContent", false)
+	if err != nil {
+		return nil, err
+	}
+	req, err := c.newAbsoluteRequest(ctx, http.MethodPost, targetURL, apiKey, bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}
@@ -651,10 +654,14 @@ func (c *GeminiBatchHTTPClient) doJSON(req *http.Request, out any) error {
 }
 
 func (c *GeminiBatchHTTPClient) newRequest(ctx context.Context, method, path, apiKey string, body io.Reader) (*http.Request, error) {
+	return c.newAbsoluteRequest(ctx, method, c.baseURL+path, apiKey, body)
+}
+
+func (c *GeminiBatchHTTPClient) newAbsoluteRequest(ctx context.Context, method, targetURL, apiKey string, body io.Reader) (*http.Request, error) {
 	if strings.TrimSpace(apiKey) == "" {
 		return nil, ErrBatchImageProviderMissingAPIKey
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
+	req, err := http.NewRequestWithContext(ctx, method, targetURL, body)
 	if err != nil {
 		return nil, err
 	}

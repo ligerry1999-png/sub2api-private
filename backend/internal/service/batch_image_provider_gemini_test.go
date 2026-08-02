@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -240,6 +242,27 @@ func TestGeminiProvider_MetadataDoesNotStoreImageBytesOrBase64(t *testing.T) {
 	require.NotContains(t, got.ProviderOutputRef, "base64")
 	require.NotContains(t, got.ProviderJobName+got.ProviderInputRef+got.ProviderOutputRef, "iVBOR")
 	require.NotContains(t, got.ProviderJobName+got.ProviderInputRef+got.ProviderOutputRef, "A clean product hero image")
+}
+
+func TestGeminiBatchHTTPClient_CreateBatchGuardsModelPath(t *testing.T) {
+	requestCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		require.Equal(t, "/v1beta/models/gemini-3.1-flash-image:batchGenerateContent", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"name":"batches/job-123","state":"JOB_STATE_PENDING"}`))
+	}))
+	defer server.Close()
+
+	client := NewGeminiBatchHTTPClient(server.URL, server.Client())
+	_, err := client.CreateBatch(context.Background(), "sk-test", "../../files", "files/input", "batch")
+	require.ErrorContains(t, err, "invalid gemini model")
+	require.Zero(t, requestCount, "unsafe model must be rejected before any upstream request")
+
+	job, err := client.CreateBatch(context.Background(), "sk-test", "gemini-3.1-flash-image", "files/input", "batch")
+	require.NoError(t, err)
+	require.Equal(t, "batches/job-123", job.Name)
+	require.Equal(t, 1, requestCount)
 }
 
 func requireJSONLLine(t *testing.T, line, wantKey, wantPrompt string) {
