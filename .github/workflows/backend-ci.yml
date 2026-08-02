@@ -15,6 +15,7 @@ jobs:
       - name: Check deployment scripts
         run: |
           /bin/bash -n deploy/apple-container.sh
+          /bin/bash -n deploy/database-rehearsal.sh
           /bin/bash -n scripts/check-private-upgrade-guards.sh
           /bin/sh -n deploy/tanzhongyu/storage-cleanup.sh
           /bin/sh -n deploy/tests/storage-cleanup-test.sh

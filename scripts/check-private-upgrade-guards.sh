@@ -38,6 +38,8 @@ assert_contains "$workflow" "docker load -i /tmp/sub2api-image.tgz"
 assert_contains "$workflow" "up -d --no-build sub2api"
 assert_contains "$workflow" 'container_health="$(docker inspect --format'
 assert_contains "$workflow" 'grep -F "commit: ${RELEASE_SHA}"'
+assert_contains "$workflow" "printf '%s\\n' \"\$GITHUB_SHA\" > .release-commit"
+assert_contains "$workflow" 'org.opencontainers.image.revision'
 assert_contains "$workflow" 'probe_custom_route POST /v1/image-jobs/images/generations 401'
 assert_not_contains "$workflow" "  push:"
 assert_not_contains "$workflow" "docker-compose.build.yml"
@@ -81,6 +83,9 @@ assert_contains "$gateway_routes" 'POST("/responses/*subpath", guardResponsesSub
 assert_contains "$gateway_routes" 'r.POST("/responses/*subpath", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, guardResponsesSubpath(responsesHandler))'
 assert_contains "$gateway_routes" 'codexDirect.POST("/responses/*subpath", guardResponsesSubpath(responsesHandler))'
 assert_contains "$compose" 'no-new-privileges:true'
+assert_contains "Dockerfile" 'LABEL org.opencontainers.image.revision="${COMMIT}"'
+test -f .github/workflows/database-rehearsal.yml || fail "database rehearsal workflow is missing"
+test -f deploy/database-rehearsal.sh || fail "database rehearsal script is missing"
 
 assert_contains "backend/go.mod" "golang.org/x/image v0.43.0"
 assert_contains "backend/go.mod" "golang.org/x/text v0.39.0"

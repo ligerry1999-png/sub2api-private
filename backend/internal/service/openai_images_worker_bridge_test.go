@@ -132,7 +132,11 @@ func TestOpenAIImagesWorkerCooldownUntilForError(t *testing.T) {
 
 func TestShouldTryOpenAIImagesWorkerSkipsKnownFailedWorkerDuringNativeFallback(t *testing.T) {
 	svc := &OpenAIGatewayService{cfg: &config.Config{Gateway: config.GatewayConfig{
-		ImageWorker: config.GatewayImageWorkerConfig{Enabled: true},
+		ImageWorker: config.GatewayImageWorkerConfig{
+			Enabled: true,
+			BaseURL: "http://image-worker.internal/v1",
+			Token:   "test-token",
+		},
 	}}}
 	parsed := &OpenAIImagesRequest{Endpoint: openAIImagesGenerationsEndpoint}
 

@@ -89,6 +89,7 @@ jobs:
           DEPLOY_PORT="${DEPLOY_PORT:-22}"
           BUNDLE="/tmp/sub2api-release-${GITHUB_SHA}.tgz"
           IMAGE_BUNDLE="/tmp/sub2api-image-${GITHUB_SHA}.tar.gz"
+          printf '%s\n' "$GITHUB_SHA" > .release-commit
           tar --exclude='.git' -czf "$BUNDLE" .
           scp -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
             -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" "$BUNDLE" "$DEPLOY_USER@$DEPLOY_HOST:/tmp/sub2api-release.tgz"
@@ -299,6 +300,9 @@ jobs:
           }
 
           expected_version="$(tr -d '\r\n' < "$REPO_DIR/backend/cmd/server/VERSION")"
+          test "$(tr -d '\r\n' < "$REPO_DIR/.release-commit")" = "$RELEASE_SHA"
+          image_revision="$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "sub2api:private-${RELEASE_SHA}")"
+          test "$image_revision" = "$RELEASE_SHA"
           build_info="$(docker exec sub2api-private /app/sub2api -version 2>&1)"
           printf '%s\n' "$build_info"
           printf '%s\n' "$build_info" | grep -F "Sub2API ${expected_version}"

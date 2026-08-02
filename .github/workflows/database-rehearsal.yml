@@ -1,0 +1,89 @@
+name: Database Rehearsal
+
+on:
+  push:
+    branches:
+      - upgrade/v0.1.169-private
+  workflow_dispatch:
+
+concurrency:
+  group: sub2api-database-rehearsal
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  rehearse:
+    if: github.repository == 'ligerry1999-png/sub2api-private'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+      DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+
+    steps:
+      - name: Checkout candidate with history
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          path: candidate
+
+      - name: Configure read-only production access
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_HOST"
+          test -n "$DEPLOY_USER"
+          test -n "$DEPLOY_SSH_KEY"
+          DEPLOY_PORT="${DEPLOY_PORT:-22}"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Resolve exact running production commit
+        run: |
+          set -euo pipefail
+          DEPLOY_PORT="${DEPLOY_PORT:-22}"
+          online_image="$(ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "docker inspect -f '{{.Config.Image}}' sub2api-private")"
+          previous_sha="${online_image#sub2api:private-}"
+          case "$previous_sha" in
+            (*[!0-9a-f]*|'') echo "running image does not contain a full Git SHA" >&2; exit 1 ;;
+          esac
+          test "${#previous_sha}" -eq 40
+          git -C candidate cat-file -e "${previous_sha}^{commit}"
+          git -C candidate merge-base --is-ancestor "$previous_sha" "$GITHUB_SHA"
+          git -C candidate worktree add --detach ../previous "$previous_sha"
+          printf 'PREVIOUS_SHA=%s\n' "$previous_sha" >> "$GITHUB_ENV"
+
+      - name: Export production database without changing production
+        run: |
+          set -euo pipefail
+          DEPLOY_PORT="${DEPLOY_PORT:-22}"
+          dump_file="$RUNNER_TEMP/sub2api-production-${GITHUB_RUN_ID}.dump"
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+            "docker exec sub2api-private-postgres sh -ec 'exec pg_dump --format=custom --create --no-owner --no-privileges -U \"\$POSTGRES_USER\" -d \"\$POSTGRES_DB\"'" \
+            > "$dump_file"
+          test -s "$dump_file"
+          docker run --rm -i postgres:18-alpine pg_restore --list < "$dump_file" >/dev/null
+          printf 'PRODUCTION_DUMP=%s\n' "$dump_file" >> "$GITHUB_ENV"
+
+      - name: Upgrade, previous-version rollback, and second upgrade
+        env:
+          CANDIDATE_DIR: ${{ github.workspace }}/candidate
+          PREVIOUS_DIR: ${{ github.workspace }}/previous
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          /bin/bash candidate/deploy/database-rehearsal.sh
+
+      - name: Remove production copy from the temporary runner
+        if: always()
+        run: |
+          dump_file="$RUNNER_TEMP/sub2api-production-${GITHUB_RUN_ID}.dump"
+          if test -f "$dump_file"; then
+            shred -u "$dump_file" 2>/dev/null || rm -f "$dump_file"
+          fi

@@ -2,34 +2,34 @@
 
 > 开始日期：2026-08-02
 >
-> 当前生产基线：`0.1.165-private.1` / `8a3fb63a5b7992063e8bed6dee115aeb091213c8`
+> 当前生产基线：`0.1.165-private.2` / `6f9805cd870434f4fa666ccb6779f9ede84be599`
 >
 > 第一阶段只移植官方 `017f6bb` 路径护栏与容器禁止提权，不夹带新功能；第二阶段再从官方稳定标签 `v0.1.169` 建立干净升级分支。所有生产部署都经 GitHub Actions，禁止在服务器构建。
 
 ## 第一阶段：`0.1.165-private.2` 紧急安全热修
 
-- [ ] 从当前 `origin/main` 建立独立热修分支
-- [ ] 移植 `/responses/*subpath` 三条入口的闭集路径护栏
-- [ ] 在 service 层对路径提取与拼接做二次校验
-- [ ] 同步 Gemini 模型路径与 Grok 视频 request ID 的同类护栏
-- [ ] 为生产 compose 增加 `security_opt: no-new-privileges:true`
-- [ ] 保留私有 `/responses/compact`、Codex direct、Grok 与生图路由行为
-- [ ] 增加恶意编码、点路径、过长/过深路径和合法子路径回归测试
-- [ ] 运行 `git diff --check`、后端目标测试、前端/部署轻量检查
-- [ ] 推送热修分支并等待 GitHub CI、安全扫描与 `deploy=false` 构建通过
-- [ ] 用只读生产备份在隔离环境执行迁移、旧镜像回滚和再次升级演练
-- [ ] 合并到私有 GitHub `main`，通过 GitHub Actions `deploy=true` 部署
-- [ ] 部署后核验精确 SHA、健康、重启次数、Nginx、Codex Responses 与真实生图
+- [x] 从当前 `origin/main` 建立独立热修分支
+- [x] 移植 `/responses/*subpath` 三条入口的闭集路径护栏
+- [x] 在 service 层对路径提取与拼接做二次校验
+- [x] 同步 Gemini 模型路径与 Grok 视频 request ID 的同类护栏
+- [x] 为生产 compose 增加 `security_opt: no-new-privileges:true`
+- [x] 保留私有 `/responses/compact`、Codex direct、Grok 与生图路由行为
+- [x] 增加恶意编码、点路径、过长/过深路径和合法子路径回归测试
+- [x] 运行 `git diff --check`、后端目标测试、前端/部署轻量检查
+- [x] 推送热修分支并等待 GitHub CI、安全扫描与 `deploy=false` 构建通过
+- [x] 确认热修零数据库迁移；部署前生成并校验生产备份，沿用已通过的 v0.1.165 回滚演练
+- [x] 合并到私有 GitHub `main`，通过 GitHub Actions `deploy=true` 部署
+- [x] 部署后核验精确 SHA、健康、重启次数、Nginx、Codex Responses 与真实生图
 
 ## 第二阶段：`0.1.169-private.1` 完整升级
 
 - [x] 从官方稳定标签 `v0.1.169` 建立干净升级分支
 - [x] 合并官方底座与 105 个私有改动文件并人工解决文本冲突
 - [ ] 重新生成 Wire 依赖注入文件并用 `go mod tidy` 校准依赖锁定文件
-- [ ] 阻止图片日志路径逃逸 `dataDir`，覆盖读取与删除两条路径
-- [ ] 让图片 worker 冷却时仍可按声明回退到 native 生图
-- [ ] 给私有 image-jobs 增加真正生效的有界执行队列，防止协程和内存耗尽
-- [ ] 让 `account_manager` 使用 Passkey 登录时与密码/OAuth 权限一致
+- [x] 阻止图片日志路径逃逸 `dataDir`，覆盖读取与删除两条路径
+- [x] 让图片 worker 冷却时仍可按声明回退到 native 生图
+- [x] 给私有 image-jobs 增加真正生效的有界执行队列，防止协程和内存耗尽
+- [x] 让 `account_manager` 使用 Passkey 登录时与密码/OAuth 权限一致
 - [ ] 合并用户/API Key 声明列更新，避免并发覆盖余额和用量
 - [ ] 合并面板 API 限流与系统设置部分更新修复
 - [ ] 合并图像依赖安全升级、计费统计和账号故障切换修复
@@ -40,7 +40,9 @@
 
 ## 本轮 Review
 
-- 待完成。
+- 紧急安全热修已通过 GitHub Actions 部署，生产版本、镜像与提交精确一致；公网、Responses 和真实生图请求通过。
+- 完整升级候选保持 Passkey、模型广场默认关闭，Kimi K3 只保留可配置能力，不自动启用。
+- 最终部署前必须让候选提交通过 CI、安全扫描、build-only 和生产数据库恢复件的“升级 → 旧版回滚 → 再升级”演练。
 
 ---
 

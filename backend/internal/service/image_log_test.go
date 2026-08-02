@@ -172,7 +172,7 @@ func TestImageLogServiceRejectsPathsOutsideDataDir(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := &fakeImageLogRepository{byID: map[int64]*ImageLog{
 				int64(i + 1): {
-					ID: int64(i + 1),
+					ID:     int64(i + 1),
 					Images: []ImageLogImage{{Index: 0, FilePath: tt.path, MIMEType: "image/png"}},
 				},
 			}}
