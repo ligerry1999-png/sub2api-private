@@ -31,10 +31,14 @@ gateway_routes="backend/internal/server/routes/gateway.go"
 assert_contains "$workflow" "workflow_dispatch:"
 assert_contains "$workflow" "migration_rehearsal_sha:"
 assert_contains "$workflow" 'if: ${{ inputs.deploy == true }}'
+assert_contains "$workflow" 'test "$GITHUB_REF" = "refs/heads/main"'
 assert_contains "$workflow" "pg_dump --format=custom"
 assert_contains "$workflow" "pg_restore --list"
 assert_contains "$workflow" "docker load -i /tmp/sub2api-image.tgz"
 assert_contains "$workflow" "up -d --no-build sub2api"
+assert_contains "$workflow" 'container_health="$(docker inspect --format'
+assert_contains "$workflow" 'grep -F "commit: ${RELEASE_SHA}"'
+assert_contains "$workflow" 'probe_custom_route POST /v1/image-jobs/images/generations 401'
 assert_not_contains "$workflow" "  push:"
 assert_not_contains "$workflow" "docker-compose.build.yml"
 assert_not_contains "$workflow" "docker compose build"

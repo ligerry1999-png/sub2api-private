@@ -41,6 +41,10 @@ jobs:
         if: ${{ inputs.deploy == true }}
         run: |
           set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main" || {
+            echo "deploy=true is allowed only from the main branch"
+            exit 1
+          }
           test -n "$DEPLOY_HOST" || { echo "DEPLOY_HOST is required"; exit 1; }
           test -n "$DEPLOY_USER" || { echo "DEPLOY_USER is required"; exit 1; }
           test -n "$DEPLOY_SSH_KEY" || { echo "DEPLOY_SSH_KEY is required"; exit 1; }
@@ -277,29 +281,52 @@ jobs:
 
           echo "Sub2API health check passed"
 
+          container_health=""
+          for health_attempt in $(seq 1 45); do
+            container_health="$(docker inspect --format '{{.State.Health.Status}}' sub2api-private 2>/dev/null || true)"
+            if [ "$container_health" = "healthy" ]; then
+              break
+            fi
+            if [ "$container_health" = "unhealthy" ]; then
+              break
+            fi
+            sleep 2
+          done
+          test "$container_health" = "healthy" || {
+            echo "Sub2API container is not healthy: ${container_health:-unknown}"
+            false
+          }
+
+          expected_version="$(tr -d '\r\n' < "$REPO_DIR/backend/cmd/server/VERSION")"
+          build_info="$(docker exec sub2api-private /app/sub2api -version 2>&1)"
+          printf '%s\n' "$build_info"
+          printf '%s\n' "$build_info" | grep -F "Sub2API ${expected_version}"
+          printf '%s\n' "$build_info" | grep -F "commit: ${RELEASE_SHA}"
+
           probe_custom_route() {
             method="$1"
             path="$2"
-            body="${3:-}"
+            expected_status="$3"
+            body="${4:-}"
             out="/tmp/sub2api-route-probe.out"
             if [ "$method" = "POST" ]; then
               status="$(curl -sS -o "$out" -w '%{http_code}' -X POST -H 'Content-Type: application/json' --data "$body" "http://127.0.0.1:18080${path}" || true)"
             else
               status="$(curl -sS -o "$out" -w '%{http_code}' "http://127.0.0.1:18080${path}" || true)"
             fi
-            if [ "$status" = "404" ] || [ "$status" = "000" ]; then
-              echo "Custom route probe failed: ${method} ${path} status=${status}"
+            if [ "$status" != "$expected_status" ]; then
+              echo "Custom route probe failed: ${method} ${path} status=${status}, expected=${expected_status}"
               head -c 500 "$out" || true
               exit 1
             fi
             echo "Custom route probe passed: ${method} ${path} status=${status}"
           }
 
-          probe_custom_route POST /v1/image-jobs/images/generations '{"model":"gpt-image-2","prompt":"probe"}'
-          probe_custom_route POST /v1/image-jobs/images/edits '{"model":"gpt-image-2","prompt":"probe"}'
-          probe_custom_route GET /v1/image-jobs/imgjob_probe
-          probe_custom_route GET /v1/image-jobs/imgjob_probe/result
-          probe_custom_route POST /v1/image-jobs/imgjob_probe/cancel
+          probe_custom_route POST /v1/image-jobs/images/generations 401 '{"model":"gpt-image-2","prompt":"probe"}'
+          probe_custom_route POST /v1/image-jobs/images/edits 401 '{"model":"gpt-image-2","prompt":"probe"}'
+          probe_custom_route GET /v1/image-jobs/imgjob_probe 401
+          probe_custom_route GET /v1/image-jobs/imgjob_probe/result 401
+          probe_custom_route POST /v1/image-jobs/imgjob_probe/cancel 401
 
           if command -v nginx >/dev/null 2>&1; then
             cp "$DEPLOY_DIR/nginx-sub2api-prod.conf" /etc/nginx/sites-available/sub2api
