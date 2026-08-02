@@ -6,12 +6,14 @@ import (
 	"strings"
 )
 
-// geminiAIStudioActions 是允许出现在上游 URL 里的 action 集合，与 ForwardNative
-// 的入站校验保持一致，同时避免 compat 侧把可变字符串直接拼进 path。
+// geminiAIStudioActions 是允许出现在上游 URL 里的 action 集合。前三项与
+// ForwardNative 的入站校验一致；batchGenerateContent 只供私有批量生图链路使用。
+// 集中列出允许值，避免把可变字符串直接拼进 path。
 var geminiAIStudioActions = map[string]struct{}{
 	"generateContent":       {},
 	"streamGenerateContent": {},
 	"countTokens":           {},
+	"batchGenerateContent":  {},
 }
 
 // buildGeminiAIStudioModelActionURL 组装 AI Studio 的

@@ -57,7 +57,15 @@
         <span>{{ privacyBadge.label }}</span>
       </span>
     </div>
-    <!-- Row 3: Subscription expiration (non-free paid accounts only) -->
+    <!-- Row 3: OpenAI workspace/account space -->
+    <div
+      v-if="spaceLabel"
+      class="max-w-[220px] truncate pl-0.5 text-[10px] leading-tight text-gray-500 dark:text-gray-400"
+      :title="spaceTitle"
+    >
+      {{ spaceLabel }}
+    </div>
+    <!-- Row 4: Subscription expiration (non-free paid accounts only) -->
     <div v-if="expiresLabel" class="text-[10px] leading-tight text-gray-400 dark:text-gray-500 pl-0.5" :title="subscriptionExpiresAt">
       {{ expiresLabel }}
     </div>
@@ -81,6 +89,10 @@ interface Props {
   planType?: string
   privacyMode?: string
   subscriptionExpiresAt?: string
+  accountName?: string
+  accountStructure?: string
+  chatgptAccountId?: string
+  organizationId?: string
 }
 
 const props = defineProps<Props>()
@@ -160,6 +172,35 @@ const planIconName = computed<'bolt' | null>(() => {
     return 'bolt'
   }
   return null
+})
+
+const shortID = (value?: string) => {
+  const trimmed = value?.trim()
+  if (!trimmed) return ''
+  if (trimmed.length <= 12) return trimmed
+  return `${trimmed.slice(0, 8)}...${trimmed.slice(-4)}`
+}
+
+const spaceLabel = computed(() => {
+  if (props.platform !== 'openai' || props.type !== 'oauth') return ''
+  const name = props.accountName?.trim()
+  if (name) return `空间 ${name}`
+  const structure = props.accountStructure?.trim().toLowerCase()
+  if (structure === 'personal') return '空间 Personal'
+  const accountID = shortID(props.chatgptAccountId)
+  if (accountID) return `空间 ${accountID}`
+  const orgID = shortID(props.organizationId)
+  if (orgID) return `组织 ${orgID}`
+  return ''
+})
+
+const spaceTitle = computed(() => {
+  const parts: string[] = []
+  if (props.accountName?.trim()) parts.push(`空间: ${props.accountName.trim()}`)
+  if (props.accountStructure?.trim()) parts.push(`结构: ${props.accountStructure.trim()}`)
+  if (props.chatgptAccountId?.trim()) parts.push(`ChatGPT Account: ${props.chatgptAccountId.trim()}`)
+  if (props.organizationId?.trim()) parts.push(`Org: ${props.organizationId.trim()}`)
+  return parts.join('\n')
 })
 
 const platformClass = computed(() => {

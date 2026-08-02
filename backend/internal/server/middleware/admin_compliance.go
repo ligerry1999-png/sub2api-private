@@ -15,6 +15,12 @@ func AdminComplianceGuard(settingService *service.SettingService) gin.HandlerFun
 			c.Next()
 			return
 		}
+		// Compliance acknowledgement applies to full administrators. Scoped account
+		// managers cannot access the acknowledgement page and only maintain accounts.
+		if role, ok := GetUserRoleFromContext(c); ok && role != service.RoleAdmin {
+			c.Next()
+			return
+		}
 
 		subject, ok := GetAuthSubjectFromContext(c)
 		if !ok {

@@ -99,10 +99,17 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 	if !h.checkSecurityAuditBeforeSubmit(c, apiKey, platform, body) {
 		return
 	}
+	asyncRelease, acquired := h.openAI.tryAcquireAsyncImageExecution()
+	if !acquired {
+		c.Header("Retry-After", "3")
+		imageTaskJSONError(c, http.StatusTooManyRequests, "rate_limit_error", "Too many asynchronous image tasks are already running")
+		return
+	}
 
 	taskCtx, recorder, cancel := newAsyncImageContext(c, body, h.tasks.ExecutionTimeout())
 	task, err := h.tasks.Create(c.Request.Context(), service.ImageTaskOwner{UserID: apiKey.UserID, APIKeyID: apiKey.ID})
 	if err != nil {
+		asyncRelease()
 		cancel()
 		imageTaskError(c, err)
 		return
@@ -122,7 +129,10 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 		"poll_url":   pollURL,
 	})
 
-	go h.run(task.ID, platform, taskCtx, recorder, cancel)
+	go func() {
+		defer asyncRelease()
+		h.run(task.ID, platform, taskCtx, recorder, cancel)
+	}()
 }
 
 func (h *AsyncImageHandler) checkSecurityAuditBeforeSubmit(c *gin.Context, apiKey *service.APIKey, platform string, body []byte) bool {

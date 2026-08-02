@@ -15,7 +15,12 @@ jobs:
       - name: Check deployment scripts
         run: |
           /bin/bash -n deploy/apple-container.sh
+          /bin/bash -n scripts/check-private-upgrade-guards.sh
+          /bin/sh -n deploy/tanzhongyu/storage-cleanup.sh
+          /bin/sh -n deploy/tests/storage-cleanup-test.sh
           /bin/bash deploy/tests/apple-container-test.sh
+          /bin/sh deploy/tests/storage-cleanup-test.sh
+          /bin/bash scripts/check-private-upgrade-guards.sh
           /bin/sh deploy/tests/docker-compose-security-test.sh
           /bin/sh deploy/tests/docker-runtime-resources-test.sh
           /bin/sh deploy/test-caddyfile-cache.sh

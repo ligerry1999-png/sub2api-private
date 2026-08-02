@@ -153,6 +153,9 @@ func RegisterGatewayRoutes(
 		service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
 		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"type": "not_found_error", "message": "Videos API is not supported for this platform"}})
 	}
+	r.GET("/image-files/*filepath", h.OpenAIGateway.ServeImageJobPublicFile)
+	r.HEAD("/image-files/*filepath", h.OpenAIGateway.ServeImageJobPublicFile)
+
 	// /responses/*subpath 的子路径会被转发到上游同名端点之后，因此在入口就拒掉
 	// 不可转发的子路径，不让它进入调度与转发流程。可转发的判定见
 	// service.IsForwardableOpenAIResponsesRequestPath 及 upstream_path_guard.go。
@@ -261,6 +264,34 @@ func RegisterGatewayRoutes(
 		gateway.POST("/videos/extensions", videoExtensionHandler)
 		gateway.GET("/videos/:request_id", videoStatusHandler)
 		gateway.GET("/videos/:request_id/content", videoContentHandler)
+		gateway.POST("/image-jobs/images/generations", func(c *gin.Context) {
+			if getGroupPlatform(c) != service.PlatformOpenAI {
+				c.JSON(http.StatusNotFound, gin.H{
+					"error": gin.H{
+						"type":    "not_found_error",
+						"message": "Images API is not supported for this platform",
+					},
+				})
+				return
+			}
+			h.OpenAIGateway.CreateImageGenerationJob(c)
+		})
+		gateway.POST("/image-jobs/images/edits", func(c *gin.Context) {
+			if getGroupPlatform(c) != service.PlatformOpenAI {
+				c.JSON(http.StatusNotFound, gin.H{
+					"error": gin.H{
+						"type":    "not_found_error",
+						"message": "Images API is not supported for this platform",
+					},
+				})
+				return
+			}
+			h.OpenAIGateway.CreateImageEditJob(c)
+		})
+		gateway.GET("/image-jobs/:job_id", h.OpenAIGateway.GetImageJob)
+		gateway.GET("/image-jobs/:job_id/result", h.OpenAIGateway.GetImageJobResult)
+		gateway.POST("/image-jobs/:job_id/cancel", h.OpenAIGateway.CancelImageJob)
+		gateway.DELETE("/image-jobs/:job_id/cancel", h.OpenAIGateway.CancelImageJob)
 	}
 
 	// Gemini 原生 API 兼容层（Gemini SDK/CLI 直连）
@@ -339,6 +370,34 @@ func RegisterGatewayRoutes(
 	r.POST("/videos/extensions", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, videoExtensionHandler)
 	r.GET("/videos/:request_id", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, videoStatusHandler)
 	r.GET("/videos/:request_id/content", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, videoContentHandler)
+	r.POST("/image-jobs/images/generations", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, func(c *gin.Context) {
+		if getGroupPlatform(c) != service.PlatformOpenAI {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": gin.H{
+					"type":    "not_found_error",
+					"message": "Images API is not supported for this platform",
+				},
+			})
+			return
+		}
+		h.OpenAIGateway.CreateImageGenerationJob(c)
+	})
+	r.POST("/image-jobs/images/edits", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, func(c *gin.Context) {
+		if getGroupPlatform(c) != service.PlatformOpenAI {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": gin.H{
+					"type":    "not_found_error",
+					"message": "Images API is not supported for this platform",
+				},
+			})
+			return
+		}
+		h.OpenAIGateway.CreateImageEditJob(c)
+	})
+	r.GET("/image-jobs/:job_id", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, h.OpenAIGateway.GetImageJob)
+	r.GET("/image-jobs/:job_id/result", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, h.OpenAIGateway.GetImageJobResult)
+	r.POST("/image-jobs/:job_id/cancel", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, h.OpenAIGateway.CancelImageJob)
+	r.DELETE("/image-jobs/:job_id/cancel", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, h.OpenAIGateway.CancelImageJob)
 
 	// Antigravity 模型列表
 	r.GET("/antigravity/models", gin.HandlerFunc(apiKeyAuth), requireGroupAnthropic, h.Gateway.AntigravityModels)

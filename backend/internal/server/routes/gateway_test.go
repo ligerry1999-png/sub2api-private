@@ -143,6 +143,60 @@ func TestGatewayRoutesAsyncImagesPathsAreRegistered(t *testing.T) {
 	}
 }
 
+func TestGatewayRoutesOpenAIImageJobPathsAreRegistered(t *testing.T) {
+	router := newGatewayRoutesTestRouter()
+
+	for _, path := range []string{
+		"/v1/image-jobs/images/generations",
+		"/v1/image-jobs/images/edits",
+		"/image-jobs/images/generations",
+		"/image-jobs/images/edits",
+	} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"gpt-image-2","prompt":"draw a cat"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+		require.NotEqual(t, http.StatusNotFound, w.Code, "path=%s should hit OpenAI image job handler", path)
+	}
+
+	for _, path := range []string{
+		"/v1/image-jobs/imgjob_test",
+		"/v1/image-jobs/imgjob_test/result",
+		"/image-jobs/imgjob_test",
+		"/image-jobs/imgjob_test/result",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, strings.NewReader(""))
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+		require.Contains(t, w.Body.String(), "Image job not found", "path=%s should hit OpenAI image job handler", path)
+	}
+
+	for _, method := range []string{http.MethodPost, http.MethodDelete} {
+		for _, path := range []string{
+			"/v1/image-jobs/imgjob_test/cancel",
+			"/image-jobs/imgjob_test/cancel",
+		} {
+			req := httptest.NewRequest(method, path, strings.NewReader(""))
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+			require.Contains(t, w.Body.String(), "Image job not found", "method=%s path=%s should hit OpenAI image job cancel handler", method, path)
+		}
+	}
+}
+
+func TestGatewayRoutesPublicImageFilePathsAreRegistered(t *testing.T) {
+	router := newGatewayRoutesTestRouter()
+	registered := make(map[string]bool)
+	for _, route := range router.Routes() {
+		registered[route.Method+" "+route.Path] = true
+	}
+	require.True(t, registered["GET /image-files/*filepath"])
+	require.True(t, registered["HEAD /image-files/*filepath"])
+}
+
 func TestGatewayRoutesGrokImagesAndVideosPathsAreRegistered(t *testing.T) {
 	router := newGatewayRoutesTestRouter(service.PlatformGrok)
 

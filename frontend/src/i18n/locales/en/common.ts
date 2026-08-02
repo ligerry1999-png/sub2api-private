@@ -198,6 +198,7 @@ export default {
     contentModeration: 'Content Moderation',
     promptAudit: 'Prompt Audit',
     auditLogs: 'Audit Logs',
+    imageLogs: 'Image Logs',
   },
 
   // Auth

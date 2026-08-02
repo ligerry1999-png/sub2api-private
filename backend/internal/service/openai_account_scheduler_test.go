@@ -3261,6 +3261,29 @@ func TestBuildOpenAIWeightedSelectionOrder_DeterministicBySessionSeed(t *testing
 	}
 }
 
+func TestOpenAIImageWorkerCooldownAllowsDeclaredNativeFallback(t *testing.T) {
+	account := &Account{
+		ID:       50991,
+		Platform: PlatformOpenAI,
+		Type:     AccountTypeOAuth,
+	}
+	svc := &OpenAIGatewayService{}
+	svc.BlockOpenAIImageWorkerScheduling(account, time.Now().Add(time.Minute))
+	scheduler := &defaultOpenAIAccountScheduler{service: svc}
+	req := OpenAIAccountScheduleRequest{RequiredImageCapability: OpenAIImagesCapabilityBasic}
+
+	compatible, reason := scheduler.isAccountRequestCompatibleReason(context.Background(), account, req)
+	require.False(t, compatible)
+	require.Equal(t, "image_worker_cooling_down", reason)
+	require.False(t, svc.openAIAccountSupportsSelection(context.Background(), account, "", OpenAIImagesCapabilityBasic))
+
+	fallbackCtx := WithOpenAIImageWorkerFallbackAllowed(context.Background())
+	compatible, reason = scheduler.isAccountRequestCompatibleReason(fallbackCtx, account, req)
+	require.True(t, compatible)
+	require.Empty(t, reason)
+	require.True(t, svc.openAIAccountSupportsSelection(fallbackCtx, account, "", OpenAIImagesCapabilityBasic))
+}
+
 func TestOpenAIGatewayService_SelectAccountWithScheduler_LoadBalanceDistributesAcrossSessions(t *testing.T) {
 	ctx := context.Background()
 	groupID := int64(15)

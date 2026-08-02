@@ -40,6 +40,8 @@ type OpenAIGatewayHandler struct {
 	opsService                 *service.OpsService
 	concurrencyHelper          *ConcurrencyHelper
 	imageLimiter               *imageConcurrencyLimiter
+	asyncImageLimiter          *imageConcurrencyLimiter
+	imageJobStore              *openAIImageJobStore
 	maxAccountSwitches         int
 	cfg                        *config.Config
 }
@@ -225,6 +227,8 @@ func NewOpenAIGatewayHandler(
 		opsService:               opsService,
 		concurrencyHelper:        NewConcurrencyHelper(concurrencyService, SSEPingFormatComment, pingInterval),
 		imageLimiter:             &imageConcurrencyLimiter{},
+		asyncImageLimiter:        &imageConcurrencyLimiter{},
+		imageJobStore:            newOpenAIImageJobStore(cfg),
 		maxAccountSwitches:       maxAccountSwitches,
 		cfg:                      cfg,
 	}

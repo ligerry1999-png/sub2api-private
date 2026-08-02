@@ -810,13 +810,14 @@ func TestOllamaCloudUsageRefreshSingleflightAndRunnerDeduplicateSharedGroup(t *t
 	}}
 	svc := newOllamaUsageTestService(t, repo, upstream, settingsRepo, true)
 
-	errs := make(chan error, 2)
-	go func() { _, err := svc.Refresh(context.Background(), first.ID); errs <- err }()
+	firstErr := make(chan error, 1)
+	secondErr := make(chan error, 1)
+	go func() { _, err := svc.Refresh(context.Background(), first.ID); firstErr <- err }()
 	<-started
 	// The first caller is now parked in the stub, having loaded the account twice
 	// (once to build the group key, once inside the singleflight function).
 	loadsBeforeSecond := repo.getByIDCalls.Load()
-	go func() { _, err := svc.Refresh(context.Background(), second.ID); errs <- err }()
+	go func() { _, err := svc.Refresh(context.Background(), second.ID); secondErr <- err }()
 	// Only release the first caller once the second one has loaded its own
 	// account, which happens immediately before it joins the singleflight group.
 	// Releasing right after starting the goroutine raced: if the first refresh
@@ -827,8 +828,8 @@ func TestOllamaCloudUsageRefreshSingleflightAndRunnerDeduplicateSharedGroup(t *t
 		return repo.getByIDCalls.Load() > loadsBeforeSecond
 	}, 5*time.Second, time.Millisecond, "the second caller must reach the singleflight group before the first is released")
 	close(release)
-	require.NoError(t, <-errs)
-	require.NoError(t, <-errs)
+	require.NoError(t, <-firstErr)
+	require.NoError(t, <-secondErr)
 	require.Equal(t, int64(1), upstream.calls.Load())
 	require.NotNil(t, decodeOllamaCloudUsageSnapshot(first.Extra))
 	require.Equal(t, decodeOllamaCloudUsageSnapshot(first.Extra), decodeOllamaCloudUsageSnapshot(second.Extra))

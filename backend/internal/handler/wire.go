@@ -31,6 +31,7 @@ func ProvideAdminHandlers(
 	systemHandler *admin.SystemHandler,
 	subscriptionHandler *admin.SubscriptionHandler,
 	usageHandler *admin.UsageHandler,
+	imageLogHandler *admin.ImageLogHandler,
 	userAttributeHandler *admin.UserAttributeHandler,
 	errorPassthroughHandler *admin.ErrorPassthroughHandler,
 	tlsFingerprintProfileHandler *admin.TLSFingerprintProfileHandler,
@@ -71,6 +72,7 @@ func ProvideAdminHandlers(
 		System:                 systemHandler,
 		Subscription:           subscriptionHandler,
 		Usage:                  usageHandler,
+		ImageLog:               imageLogHandler,
 		UserAttribute:          userAttributeHandler,
 		ErrorPassthrough:       errorPassthroughHandler,
 		TLSFingerprintProfile:  tlsFingerprintProfileHandler,
@@ -188,6 +190,7 @@ func ProvideHandlers(
 	batchImageHandler *BatchImageHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
+	_ *service.ImageLogCleanupService,
 ) *Handlers {
 	return &Handlers{
 		Auth:             authHandler,
@@ -257,6 +260,7 @@ var ProviderSet = wire.NewSet(
 	ProvideSystemHandler,
 	admin.NewSubscriptionHandler,
 	admin.NewUsageHandler,
+	admin.NewImageLogHandler,
 	admin.NewUserAttributeHandler,
 	admin.NewErrorPassthroughHandler,
 	admin.NewTLSFingerprintProfileHandler,

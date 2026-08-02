@@ -413,6 +413,7 @@ type OpenAIGatewayService struct {
 	userPlatformQuotaRepo UserPlatformQuotaRepository
 	liveAttestation       liveattestation.Provider
 	liveAttestationCipher SecretEncryptor
+	imageLogService       *ImageLogService
 
 	openaiWSPoolOnce               sync.Once
 	openaiWSStateStoreOnce         sync.Once
@@ -436,6 +437,7 @@ type OpenAIGatewayService struct {
 	openaiAccountRuntimeBlockGeneration sync.Map // key: int64(accountID), value: uint64
 	openaiAccountRuntimeBlockSequence   atomic.Uint64
 	grokCredentialMutationLocks         sync.Map // key: int64(accountID), value: *sync.Mutex
+	openaiImageWorkerCooldownUntil      sync.Map // key: int64(accountID), value: time.Time
 	openaiOAuth429WindowStartUnixNano   atomic.Int64
 	openaiOAuth429WindowCount           atomic.Int64
 	openaiWSRetryMetrics                openAIWSRetryMetrics
@@ -517,6 +519,13 @@ func NewOpenAIGatewayService(
 	}
 	svc.logOpenAIWSModeBootstrap()
 	return svc
+}
+
+func (s *OpenAIGatewayService) SetImageLogService(imageLogService *ImageLogService) {
+	if s == nil {
+		return
+	}
+	s.imageLogService = imageLogService
 }
 
 // ResolveChannelMapping 解析渠道级模型映射（代理到 ChannelService）

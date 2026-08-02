@@ -6,6 +6,10 @@ import (
 	"time"
 )
 
+const defaultAsyncImageExecutionLimit = 4
+
+var fallbackAsyncImageExecutionLimiter = &imageConcurrencyLimiter{}
+
 type imageConcurrencyLimiter struct {
 	mu      sync.Mutex
 	notify  chan struct{}
@@ -123,4 +127,19 @@ func (l *imageConcurrencyLimiter) waiterReleaseFunc() func() {
 			l.mu.Unlock()
 		})
 	}
+}
+
+func (h *OpenAIGatewayHandler) tryAcquireAsyncImageExecution() (func(), bool) {
+	limiter := fallbackAsyncImageExecutionLimiter
+	if h != nil && h.asyncImageLimiter != nil {
+		limiter = h.asyncImageLimiter
+	}
+	limit := envInt("ASYNC_IMAGE_MAX_CONCURRENT", defaultAsyncImageExecutionLimit)
+	if limit <= 0 {
+		limit = defaultAsyncImageExecutionLimit
+	}
+	if limit > 64 {
+		limit = 64
+	}
+	return limiter.TryAcquire(true, limit)
 }

@@ -33,6 +33,7 @@
         <label class="input-label">{{ t('admin.users.form.roleLabel') }}</label>
         <select v-model="form.role" class="input">
           <option value="user">{{ t('admin.users.roles.user') }}</option>
+          <option value="account_manager">{{ t('admin.users.roles.account_manager') }}</option>
           <option value="admin">{{ t('admin.users.roles.admin') }}</option>
         </select>
       </div>

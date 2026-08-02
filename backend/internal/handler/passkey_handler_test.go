@@ -99,3 +99,10 @@ func TestPasskeyCredentialListRemainsAvailableWhenSignInDisabled(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, recorder.Code)
 	require.NotContains(t, recorder.Body.String(), "PASSKEY_DISABLED")
 }
+
+func TestPasskeyBackendModeAllowsAllAdminAreaRoles(t *testing.T) {
+	require.True(t, passkeyUserCanAccessBackendMode(&service.User{Role: service.RoleAdmin}))
+	require.True(t, passkeyUserCanAccessBackendMode(&service.User{Role: service.RoleAccountManager}))
+	require.False(t, passkeyUserCanAccessBackendMode(&service.User{Role: service.RoleUser}))
+	require.False(t, passkeyUserCanAccessBackendMode(nil))
+}

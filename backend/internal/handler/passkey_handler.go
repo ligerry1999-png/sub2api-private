@@ -214,10 +214,14 @@ func (h *PasskeyHandler) ensureBackendModeAllowsUser(ctx context.Context, user *
 	if err := ensureLoginUserActive(user); err != nil {
 		return err
 	}
-	if h.settingSvc == nil || !h.settingSvc.IsBackendModeEnabled(ctx) || user.IsAdmin() {
+	if h.settingSvc == nil || !h.settingSvc.IsBackendModeEnabled(ctx) || passkeyUserCanAccessBackendMode(user) {
 		return nil
 	}
-	return infraerrors.Forbidden("BACKEND_MODE_ADMIN_ONLY", "Backend mode is active. Only admin login is allowed.")
+	return infraerrors.Forbidden("BACKEND_MODE_ADMIN_ONLY", "Backend mode is active. Only administrators and account managers may log in.")
+}
+
+func passkeyUserCanAccessBackendMode(user *service.User) bool {
+	return user != nil && user.CanAccessAdminArea()
 }
 
 func bindPasskeyFinishRequest(c *gin.Context) (*passkeyFinishRequest, bool) {

@@ -109,6 +109,31 @@ func TestImageConcurrencyLimiter_MaxWaitingRequestsRejectsOverflow(t *testing.T)
 	<-waitingDone
 }
 
+func TestAsyncImageExecutionLimiterIsAlwaysBounded(t *testing.T) {
+	t.Setenv("ASYNC_IMAGE_MAX_CONCURRENT", "4")
+	h := &OpenAIGatewayHandler{asyncImageLimiter: &imageConcurrencyLimiter{}}
+	releases := make([]func(), 0, defaultAsyncImageExecutionLimit)
+	for range defaultAsyncImageExecutionLimit {
+		release, acquired := h.tryAcquireAsyncImageExecution()
+		require.True(t, acquired)
+		require.NotNil(t, release)
+		releases = append(releases, release)
+	}
+
+	overflowRelease, overflowAcquired := h.tryAcquireAsyncImageExecution()
+	require.False(t, overflowAcquired)
+	require.Nil(t, overflowRelease)
+
+	releases[0]()
+	retryRelease, retryAcquired := h.tryAcquireAsyncImageExecution()
+	require.True(t, retryAcquired)
+	require.NotNil(t, retryRelease)
+	retryRelease()
+	for _, release := range releases[1:] {
+		release()
+	}
+}
+
 func TestOpenAIGatewayHandlerAcquireImageGenerationSlot_Returns429WhenFull(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
