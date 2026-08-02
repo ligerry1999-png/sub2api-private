@@ -11,9 +11,7 @@ import (
 
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
-	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
-	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
 
@@ -110,25 +108,19 @@ func newQueuedOpenAIImageJobAdmissionHandler(t *testing.T, maxPending int, maxPe
 	cfg.Gateway.AsyncImageQueue.InflightKeyPrefix = "test:admission:inflight:"
 	cfg.Gateway.AsyncImageQueue.IdempotencyKeyPrefix = "test:admission:idem:"
 
-	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	queue := newRedisOpenAIImageJobQueue(client, cfg)
-	require.NotNil(t, queue)
+	queue := newFakeOpenAIImageJobQueue()
 	concurrencyService := service.NewConcurrencyService(nil)
 	h := &OpenAIGatewayHandler{
 		gatewayService:      &service.OpenAIGatewayService{},
 		billingCacheService: &service.BillingCacheService{},
 		apiKeyService:       &service.APIKeyService{},
-		concurrencyHelper:    NewConcurrencyHelper(concurrencyService, SSEPingFormatComment, 0),
-		imageJobStore:        newOpenAIImageJobStore(cfg),
-		cfg:                  cfg,
+		concurrencyHelper:   NewConcurrencyHelper(concurrencyService, SSEPingFormatComment, 0),
+		imageJobStore:       newOpenAIImageJobStore(cfg),
+		cfg:                 cfg,
 	}
 	h.imageJobDispatcher = newOpenAIImageJobDispatcher(h, h.imageJobStore, queue, cfg)
 	require.NotNil(t, h.imageJobDispatcher)
-	cleanup := func() {
-		require.NoError(t, client.Close())
-		mr.Close()
-	}
+	cleanup := func() {}
 	return h, queue, cleanup
 }
 

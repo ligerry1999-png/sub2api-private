@@ -349,7 +349,7 @@ func (h *OpenAIGatewayHandler) createImageJob(c *gin.Context, endpoint string) {
 				// A process may have died after claiming the Redis key but before the
 				// atomic directory rename. Release only our matching stale mapping.
 				_ = h.imageJobDispatcher.releaseIdempotency(c.Request.Context(), apiKey.ID, endpoint, idempotencyKey, existing)
-				existing, claimed, claimErr = h.imageJobDispatcher.claimIdempotency(c.Request.Context(), apiKey.ID, endpoint, idempotencyKey, job.ID)
+				_, claimed, claimErr = h.imageJobDispatcher.claimIdempotency(c.Request.Context(), apiKey.ID, endpoint, idempotencyKey, job.ID)
 				if claimErr != nil || !claimed {
 					h.errorResponse(c, http.StatusServiceUnavailable, "api_error", "Image job idempotency state is temporarily unavailable")
 					return
@@ -1159,16 +1159,6 @@ func (s *openAIImageJobStore) openResult(jobID string) (*os.File, int64, string,
 		return nil, 0, "", err
 	}
 	return file, info.Size(), job.ContentType, nil
-}
-
-func (s *openAIImageJobStore) readResult(jobID string) ([]byte, string, error) {
-	file, _, contentType, err := s.openResult(jobID)
-	if err != nil {
-		return nil, "", err
-	}
-	defer func() { _ = file.Close() }()
-	body, err := io.ReadAll(file)
-	return body, contentType, err
 }
 
 func (s *openAIImageJobStore) update(jobID string, mutate func(*openAIImageJob)) error {

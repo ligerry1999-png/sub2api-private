@@ -190,14 +190,14 @@ func durableImageJobTestConfig(dataDir string, maxPending int, maxPendingBytes i
 	return &config.Config{
 		Pricing: config.PricingConfig{DataDir: dataDir},
 		Gateway: config.GatewayConfig{AsyncImageQueue: config.AsyncImageQueueConfig{
-			Enabled:          true,
-			MaxPendingTasks:  maxPending,
-			MaxPendingBytes:  maxPendingBytes,
-			WorkerCeiling:    64,
-			MaxAttempts:      8,
-			RetryBaseSeconds: 1,
-			RetryMaxSeconds:  60,
-			LeaseTTLSeconds:  60,
+			Enabled:           true,
+			MaxPendingTasks:   maxPending,
+			MaxPendingBytes:   maxPendingBytes,
+			WorkerCeiling:     64,
+			MaxAttempts:       8,
+			RetryBaseSeconds:  1,
+			RetryMaxSeconds:   60,
+			LeaseTTLSeconds:   60,
 			StaleAfterSeconds: 120,
 		}},
 	}

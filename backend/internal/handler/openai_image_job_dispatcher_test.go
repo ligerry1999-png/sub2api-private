@@ -10,8 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 )
 
@@ -82,14 +80,11 @@ func TestOpenAIImageJobDispatcherRequeuesTransientFailures(t *testing.T) {
 			require.Equal(t, tt.wantAttempts, requeued.Attempts)
 			require.NotNil(t, requeued.NextAttemptAt)
 			require.Empty(t, requeued.ErrorType, "transient failures must not be exposed as terminal errors")
-			require.EqualValues(t, 1, queue.rdb.ZCard(context.Background(), queue.delayedKey).Val())
+			require.Equal(t, 1, queue.delayedCount())
 
 			// Make the retry due immediately, then prove the same durable job can finish.
 			require.True(t, store.markPendingForRetry(job.ID, time.Now().Add(-time.Second), true))
-			require.NoError(t, queue.rdb.ZAdd(context.Background(), queue.delayedKey, redis.Z{
-				Score:  float64(time.Now().Add(-time.Second).UnixMilli()),
-				Member: job.ID,
-			}).Err())
+			queue.makeDelayedDue(job.ID)
 			moved, err := queue.MoveDueDelayedToReady(context.Background(), 10)
 			require.NoError(t, err)
 			require.Equal(t, 1, moved)
@@ -220,8 +215,8 @@ func TestOpenAIImageJobDispatcherPauseLeavesReadyJobUntouchedUntilResume(t *test
 	pending, ok := store.get(job.ID)
 	require.True(t, ok)
 	require.Equal(t, openAIImageJobStatusPending, pending.Status)
-	require.EqualValues(t, 1, queue.rdb.LLen(context.Background(), queue.readyKey).Val())
-	require.EqualValues(t, 0, queue.rdb.ZCard(context.Background(), queue.activeKey).Val())
+	require.Equal(t, 1, queue.readyCount())
+	require.Equal(t, 0, queue.activeCount())
 
 	require.NoError(t, queue.Resume(context.Background()))
 	require.NoError(t, dispatcher.RunOnce(context.Background()))
@@ -248,11 +243,7 @@ func TestOpenAIImageJobDispatcherRestoresInterruptedJobAfterRestart(t *testing.T
 	job.Attempts = 1
 	require.NoError(t, beforeRestart.createWithRequest(job, durableImageJobTestRequest()))
 
-	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer func() { require.NoError(t, client.Close()) }()
-	queue, ok := newRedisOpenAIImageJobQueue(client, cfg).(*redisOpenAIImageJobQueue)
-	require.True(t, ok)
+	queue := newFakeOpenAIImageJobQueue()
 	restartedStore := newOpenAIImageJobStore(cfg)
 	h := &OpenAIGatewayHandler{cfg: cfg}
 	dispatcher := newOpenAIImageJobDispatcher(h, restartedStore, queue, cfg)
@@ -274,7 +265,7 @@ func TestOpenAIImageJobDispatcherRestoresInterruptedJobAfterRestart(t *testing.T
 	require.Equal(t, int64(1), executions.Load())
 }
 
-func newOpenAIImageJobDispatcherTest(t *testing.T, workers int) (*openAIImageJobStore, *redisOpenAIImageJobQueue, *openAIImageJobDispatcher, func()) {
+func newOpenAIImageJobDispatcherTest(t *testing.T, workers int) (*openAIImageJobStore, *fakeOpenAIImageJobQueue, *openAIImageJobDispatcher, func()) {
 	t.Helper()
 	cfg := durableImageJobTestConfig(t.TempDir(), 100, 16<<20)
 	cfg.Gateway.AsyncImageQueue.WorkerCeiling = workers
@@ -284,10 +275,7 @@ func newOpenAIImageJobDispatcherTest(t *testing.T, workers int) (*openAIImageJob
 	cfg.Gateway.AsyncImageQueue.PauseKey = "test:dispatcher:paused"
 	cfg.Gateway.AsyncImageQueue.InflightKeyPrefix = "test:dispatcher:inflight:"
 	cfg.Gateway.AsyncImageQueue.IdempotencyKeyPrefix = "test:dispatcher:idem:"
-	mr := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	queue, ok := newRedisOpenAIImageJobQueue(client, cfg).(*redisOpenAIImageJobQueue)
-	require.True(t, ok)
+	queue := newFakeOpenAIImageJobQueue()
 	store := newOpenAIImageJobStore(cfg)
 	h := &OpenAIGatewayHandler{cfg: cfg}
 	dispatcher := newOpenAIImageJobDispatcher(h, store, queue, cfg)
@@ -296,8 +284,6 @@ func newOpenAIImageJobDispatcherTest(t *testing.T, workers int) (*openAIImageJob
 	dispatcher.opts.MaintenanceEvery = 5 * time.Millisecond
 	cleanup := func() {
 		dispatcher.Stop()
-		require.NoError(t, client.Close())
-		mr.Close()
 	}
 	return store, queue, dispatcher, cleanup
 }

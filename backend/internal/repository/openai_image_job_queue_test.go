@@ -1,13 +1,13 @@
-package handler
+package repository
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
@@ -31,7 +31,7 @@ func TestRedisOpenAIImageJobQueueAccepts440UniqueJobsWithoutNetwork(t *testing.T
 	}
 	require.Len(t, seen, 440)
 	_, err := queue.Reserve(ctx, 0)
-	require.ErrorIs(t, err, errOpenAIImageJobQueueEmpty)
+	require.ErrorIs(t, err, service.ErrOpenAIImageJobQueueEmpty)
 }
 
 func TestRedisOpenAIImageJobQueueEnqueueIsIdempotent(t *testing.T) {
@@ -50,7 +50,7 @@ func TestRedisOpenAIImageJobQueueEnqueueIsIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "imgjob_idempotent", reserved.JobID)
 	_, err = queue.Reserve(ctx, 0)
-	require.ErrorIs(t, err, errOpenAIImageJobQueueEmpty)
+	require.ErrorIs(t, err, service.ErrOpenAIImageJobQueueEmpty)
 }
 
 func TestRedisOpenAIImageJobQueueRequeuesTemporaryFailure(t *testing.T) {
@@ -64,7 +64,7 @@ func TestRedisOpenAIImageJobQueueRequeuesTemporaryFailure(t *testing.T) {
 
 	require.NoError(t, queue.RequeueAfter(ctx, reserved.JobID, 10*time.Millisecond))
 	_, err = queue.Reserve(ctx, 0)
-	require.ErrorIs(t, err, errOpenAIImageJobQueueEmpty)
+	require.ErrorIs(t, err, service.ErrOpenAIImageJobQueueEmpty)
 
 	require.Eventually(t, func() bool {
 		moved, moveErr := queue.MoveDueDelayedToReady(ctx, 10)
@@ -117,14 +117,14 @@ func TestRedisOpenAIImageJobQueueAckAllowsFutureAdmission(t *testing.T) {
 	require.True(t, accepted)
 }
 
-func newOpenAIImageJobQueueTest(t *testing.T) (openAIImageJobQueue, *miniredis.Miniredis, *redis.Client) {
+func newOpenAIImageJobQueueTest(t *testing.T) (service.OpenAIImageJobQueue, *miniredis.Miniredis, *redis.Client) {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	queue, _, client := newOpenAIImageJobQueueTestWithAddress(t, mr.Addr())
 	return queue, mr, client
 }
 
-func newOpenAIImageJobQueueTestWithAddress(t *testing.T, address string) (openAIImageJobQueue, *config.Config, *redis.Client) {
+func newOpenAIImageJobQueueTestWithAddress(t *testing.T, address string) (service.OpenAIImageJobQueue, *config.Config, *redis.Client) {
 	t.Helper()
 	client := redis.NewClient(&redis.Options{Addr: address})
 	t.Cleanup(func() { require.NoError(t, client.Close()) })
@@ -145,13 +145,7 @@ func newOpenAIImageJobQueueTestWithAddress(t *testing.T, address string) (openAI
 		InflightKeyPrefix:    "test:image_jobs:inflight:",
 		IdempotencyKeyPrefix: "test:image_jobs:idem:",
 	}}}
-	queue := newRedisOpenAIImageJobQueue(client, cfg)
+	queue := NewOpenAIImageJobQueue(client, cfg)
 	require.NotNil(t, queue)
 	return queue, cfg, client
-}
-
-func requireOpenAIImageJobQueueEmpty(t *testing.T, queue openAIImageJobQueue) {
-	t.Helper()
-	_, err := queue.Reserve(context.Background(), 0)
-	require.True(t, errors.Is(err, errOpenAIImageJobQueueEmpty))
 }
