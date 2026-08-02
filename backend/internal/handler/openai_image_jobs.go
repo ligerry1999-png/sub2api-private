@@ -776,6 +776,12 @@ func (s *openAIImageJobStore) listNonTerminal(resetRunning bool) ([]*openAIImage
 	if err != nil {
 		return nil, err
 	}
+	// Keep the disk snapshot and in-memory cache in the same critical section.
+	// Without this lock, a status request or reconciler can read an older
+	// pending meta.json and overwrite a concurrently completed in-memory job,
+	// making the dispatcher execute an already-finished request again.
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	jobs := make([]*openAIImageJob, 0)
 	for _, entry := range entries {
 		if !entry.IsDir() || !isSafeImageJobID(entry.Name()) {
@@ -800,9 +806,7 @@ func (s *openAIImageJobStore) listNonTerminal(resetRunning bool) ([]*openAIImage
 		} else if job.Status != openAIImageJobStatusPending {
 			continue
 		}
-		s.mu.Lock()
 		s.jobs[job.ID] = cloneOpenAIImageJob(job)
-		s.mu.Unlock()
 		jobs = append(jobs, cloneOpenAIImageJob(job))
 	}
 	return jobs, nil
@@ -822,13 +826,21 @@ func (s *openAIImageJobStore) get(jobID string) (*openAIImageJob, bool) {
 	if job != nil {
 		return job, true
 	}
+	// Re-check the cache after taking the write lock. A worker may have
+	// completed the job between the first cache lookup and this point; reading
+	// disk first and then blindly assigning would let an older snapshot replace
+	// that newer terminal state in memory.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	job = cloneOpenAIImageJob(s.jobs[jobID])
+	if job != nil {
+		return job, true
+	}
 	job, err := s.readMeta(jobID)
 	if err != nil {
 		return nil, false
 	}
-	s.mu.Lock()
 	s.jobs[jobID] = cloneOpenAIImageJob(job)
-	s.mu.Unlock()
 	return job, true
 }
 
