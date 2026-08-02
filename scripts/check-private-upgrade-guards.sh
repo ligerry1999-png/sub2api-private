@@ -67,8 +67,16 @@ test -f backend/internal/service/openai_responses_namespace.go || \
   fail "v0.1.165 Responses namespace protection is missing"
 test -f backend/internal/service/image_storage.go || \
   fail "v0.1.165 image-storage base is missing"
+test -f backend/internal/service/upstream_path_guard.go || \
+  fail "v0.1.169 upstream path guard is missing"
 test -f backend/migrations/190_add_users_email_alias_dedup_index_notx.sql || \
   fail "v0.1.165 migrations are incomplete"
+
+assert_contains "$gateway_routes" 'guardResponsesSubpath := func(next gin.HandlerFunc) gin.HandlerFunc'
+assert_contains "$gateway_routes" 'POST("/responses/*subpath", guardResponsesSubpath('
+assert_contains "$gateway_routes" 'r.POST("/responses/*subpath", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, guardResponsesSubpath(responsesHandler))'
+assert_contains "$gateway_routes" 'codexDirect.POST("/responses/*subpath", guardResponsesSubpath(responsesHandler))'
+assert_contains "$compose" 'no-new-privileges:true'
 
 assert_contains "backend/go.mod" "golang.org/x/image v0.43.0"
 assert_contains "backend/go.mod" "golang.org/x/text v0.39.0"
@@ -82,7 +90,7 @@ fi
 test "$actual_migration_sha" = "$expected_migration_sha" || \
   fail "backend/migrations/136_image_logs.sql checksum changed"
 
-test "$(tr -d '\r\n' < backend/cmd/server/VERSION)" = "0.1.165-private.1" || \
+test "$(tr -d '\r\n' < backend/cmd/server/VERSION)" = "0.1.165-private.2" || \
   fail "private version marker changed unexpectedly"
 
 printf 'private upgrade guards passed\n'
