@@ -8,13 +8,35 @@ trap 'rm -rf "$tmp_root"' EXIT HUP INT TERM
 runtime_dir="$tmp_root/runtime"
 image_jobs_dir="$runtime_dir/data/image_jobs"
 chat_images_dir="$tmp_root/chatgpt2api/images"
-mkdir -p "$image_jobs_dir/old-job" "$image_jobs_dir/new-job" "$chat_images_dir"
+mkdir -p \
+  "$image_jobs_dir/old-terminal" \
+  "$image_jobs_dir/old-pending" \
+  "$image_jobs_dir/old-running" \
+  "$image_jobs_dir/old-leased" \
+  "$image_jobs_dir/old-unknown" \
+  "$image_jobs_dir/new-terminal" \
+  "$chat_images_dir"
 
-printf 'old\n' > "$image_jobs_dir/old-job/result.png"
-printf 'new\n' > "$image_jobs_dir/new-job/result.png"
+printf '{"status":"success"}\n' > "$image_jobs_dir/old-terminal/meta.json"
+printf 'old\n' > "$image_jobs_dir/old-terminal/result.png"
+printf '{"status":"pending"}\n' > "$image_jobs_dir/old-pending/meta.json"
+printf 'queued\n' > "$image_jobs_dir/old-pending/request.bin"
+printf '{"status":"running"}\n' > "$image_jobs_dir/old-running/meta.json"
+printf 'running\n' > "$image_jobs_dir/old-running/request.bin"
+printf '{"status":"leased"}\n' > "$image_jobs_dir/old-leased/meta.json"
+printf 'leased\n' > "$image_jobs_dir/old-leased/request.bin"
+printf 'orphan\n' > "$image_jobs_dir/old-unknown/request.bin"
+printf '{"status":"failed"}\n' > "$image_jobs_dir/new-terminal/meta.json"
+printf 'new\n' > "$image_jobs_dir/new-terminal/result.png"
 printf 'old\n' > "$chat_images_dir/old.png"
 printf 'new\n' > "$chat_images_dir/new.png"
-touch -t 202001010000 "$image_jobs_dir/old-job/result.png" "$image_jobs_dir/old-job" "$chat_images_dir/old.png"
+touch -t 202001010000 \
+  "$image_jobs_dir/old-terminal/meta.json" "$image_jobs_dir/old-terminal/result.png" "$image_jobs_dir/old-terminal" \
+  "$image_jobs_dir/old-pending/meta.json" "$image_jobs_dir/old-pending/request.bin" "$image_jobs_dir/old-pending" \
+  "$image_jobs_dir/old-running/meta.json" "$image_jobs_dir/old-running/request.bin" "$image_jobs_dir/old-running" \
+  "$image_jobs_dir/old-leased/meta.json" "$image_jobs_dir/old-leased/request.bin" "$image_jobs_dir/old-leased" \
+  "$image_jobs_dir/old-unknown/request.bin" "$image_jobs_dir/old-unknown" \
+  "$chat_images_dir/old.png"
 
 printf '%s\n' \
   "SUB2API_DATA_DIR=$runtime_dir/data" \
@@ -27,8 +49,12 @@ ENV_FILE="$runtime_dir/.env" \
 CHATGPT2API_IMAGE_DIR="$chat_images_dir" \
   "$repo_root/deploy/tanzhongyu/storage-cleanup.sh"
 
-test ! -e "$image_jobs_dir/old-job"
-test -e "$image_jobs_dir/new-job/result.png"
+test ! -e "$image_jobs_dir/old-terminal"
+test -e "$image_jobs_dir/old-pending/request.bin"
+test -e "$image_jobs_dir/old-running/request.bin"
+test -e "$image_jobs_dir/old-leased/request.bin"
+test -e "$image_jobs_dir/old-unknown/request.bin"
+test -e "$image_jobs_dir/new-terminal/result.png"
 test ! -e "$chat_images_dir/old.png"
 test -e "$chat_images_dir/new.png"
 

@@ -42,8 +42,23 @@ type OpenAIGatewayHandler struct {
 	imageLimiter               *imageConcurrencyLimiter
 	asyncImageLimiter          *imageConcurrencyLimiter
 	imageJobStore              *openAIImageJobStore
+	imageJobDispatcher         *openAIImageJobDispatcher
 	maxAccountSwitches         int
 	cfg                        *config.Config
+}
+
+// StopImageJobDispatcher stops queue consumers before Redis is closed. Pending
+// requests remain durable under data/image_jobs and are restored on next start.
+func (h *OpenAIGatewayHandler) StartImageJobDispatcher() {
+	if h != nil && h.imageJobDispatcher != nil {
+		h.imageJobDispatcher.Start()
+	}
+}
+
+func (h *OpenAIGatewayHandler) StopImageJobDispatcher() {
+	if h != nil && h.imageJobDispatcher != nil {
+		h.imageJobDispatcher.Stop()
+	}
 }
 
 type openAIWSTurnChannelMappingSnapshot struct {

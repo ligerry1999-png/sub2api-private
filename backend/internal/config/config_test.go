@@ -1915,6 +1915,42 @@ func TestValidateConfigErrors(t *testing.T) {
 			wantErr: "gateway.image_concurrency.max_waiting_requests must be non-negative",
 		},
 		{
+			name:    "gateway async image queue pending tasks negative",
+			mutate:  func(c *Config) { c.Gateway.AsyncImageQueue.MaxPendingTasks = -1 },
+			wantErr: "gateway.async_image_queue.max_pending_tasks must be non-negative",
+		},
+		{
+			name:    "gateway async image queue pending bytes negative",
+			mutate:  func(c *Config) { c.Gateway.AsyncImageQueue.MaxPendingBytes = -1 },
+			wantErr: "gateway.async_image_queue.max_pending_bytes must be non-negative",
+		},
+		{
+			name:    "gateway async image queue worker ceiling required",
+			mutate:  func(c *Config) { c.Gateway.AsyncImageQueue.WorkerCeiling = 0 },
+			wantErr: "gateway.async_image_queue enabled limits and timeouts must be positive",
+		},
+		{
+			name: "gateway async image queue retry range",
+			mutate: func(c *Config) {
+				c.Gateway.AsyncImageQueue.RetryBaseSeconds = 61
+				c.Gateway.AsyncImageQueue.RetryMaxSeconds = 60
+			},
+			wantErr: "gateway.async_image_queue.retry_max_seconds",
+		},
+		{
+			name: "gateway async image queue stale before lease",
+			mutate: func(c *Config) {
+				c.Gateway.AsyncImageQueue.LeaseTTLSeconds = 2401
+				c.Gateway.AsyncImageQueue.StaleAfterSeconds = 2400
+			},
+			wantErr: "gateway.async_image_queue.stale_after_seconds",
+		},
+		{
+			name:    "gateway async image queue key required",
+			mutate:  func(c *Config) { c.Gateway.AsyncImageQueue.ReadyKey = "" },
+			wantErr: "gateway.async_image_queue.ready_key",
+		},
+		{
 			name:    "gateway max line size",
 			mutate:  func(c *Config) { c.Gateway.MaxLineSize = 1024 },
 			wantErr: "gateway.max_line_size must be at least",
@@ -2540,7 +2576,60 @@ func TestLoad_DefaultGatewayImageStreamConfig(t *testing.T) {
 	if cfg.Gateway.ImageConcurrency.MaxWaitingRequests != 100 {
 		t.Fatalf("image_concurrency.max_waiting_requests = %d, want 100", cfg.Gateway.ImageConcurrency.MaxWaitingRequests)
 	}
+	queue := cfg.Gateway.AsyncImageQueue
+	require.True(t, queue.Enabled)
+	require.Equal(t, 2000, queue.MaxPendingTasks)
+	require.Equal(t, int64(5*1024*1024*1024), queue.MaxPendingBytes)
+	require.Equal(t, 64, queue.WorkerCeiling)
+	require.Equal(t, 8, queue.MaxAttempts)
+	require.Equal(t, 3, queue.RetryBaseSeconds)
+	require.Equal(t, 60, queue.RetryMaxSeconds)
+	require.Equal(t, 2100, queue.LeaseTTLSeconds)
+	require.Equal(t, 2400, queue.StaleAfterSeconds)
+	require.Equal(t, "image_jobs:queue:ready", queue.ReadyKey)
+	require.Equal(t, "image_jobs:queue:delayed", queue.DelayedKey)
+	require.Equal(t, "image_jobs:queue:active", queue.ActiveKey)
+	require.Equal(t, "image_jobs:queue:paused", queue.PauseKey)
+	require.Equal(t, "image_jobs:queue:inflight:", queue.InflightKeyPrefix)
+	require.Equal(t, "image_jobs:queue:idem:", queue.IdempotencyKeyPrefix)
 	if cfg.Gateway.ImageStreamDataIntervalTimeout <= cfg.Gateway.StreamDataIntervalTimeout {
 		t.Fatalf("image stream timeout = %d, want greater than ordinary stream timeout %d", cfg.Gateway.ImageStreamDataIntervalTimeout, cfg.Gateway.StreamDataIntervalTimeout)
 	}
+}
+
+func TestLoadGatewayAsyncImageQueueFromEnvironment(t *testing.T) {
+	resetViperWithJWTSecret(t)
+	t.Setenv("GATEWAY_ASYNC_IMAGE_QUEUE_ENABLED", "true")
+	t.Setenv("GATEWAY_ASYNC_IMAGE_QUEUE_MAX_PENDING_TASKS", "3200")
+	t.Setenv("GATEWAY_ASYNC_IMAGE_QUEUE_MAX_PENDING_BYTES", "6442450944")
+	t.Setenv("GATEWAY_ASYNC_IMAGE_QUEUE_WORKER_CEILING", "96")
+	t.Setenv("GATEWAY_ASYNC_IMAGE_QUEUE_MAX_ATTEMPTS", "9")
+	t.Setenv("GATEWAY_ASYNC_IMAGE_QUEUE_RETRY_BASE_SECONDS", "4")
+	t.Setenv("GATEWAY_ASYNC_IMAGE_QUEUE_RETRY_MAX_SECONDS", "90")
+	t.Setenv("GATEWAY_ASYNC_IMAGE_QUEUE_LEASE_TTL_SECONDS", "2200")
+	t.Setenv("GATEWAY_ASYNC_IMAGE_QUEUE_STALE_AFTER_SECONDS", "2500")
+	t.Setenv("GATEWAY_ASYNC_IMAGE_QUEUE_READY_KEY", "test:image_jobs:ready")
+	t.Setenv("GATEWAY_ASYNC_IMAGE_QUEUE_DELAYED_KEY", "test:image_jobs:delayed")
+	t.Setenv("GATEWAY_ASYNC_IMAGE_QUEUE_ACTIVE_KEY", "test:image_jobs:active")
+	t.Setenv("GATEWAY_ASYNC_IMAGE_QUEUE_PAUSE_KEY", "test:image_jobs:paused")
+	t.Setenv("GATEWAY_ASYNC_IMAGE_QUEUE_INFLIGHT_KEY_PREFIX", "test:image_jobs:inflight:")
+	t.Setenv("GATEWAY_ASYNC_IMAGE_QUEUE_IDEMPOTENCY_KEY_PREFIX", "test:image_jobs:idem:")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	queue := cfg.Gateway.AsyncImageQueue
+	require.Equal(t, 3200, queue.MaxPendingTasks)
+	require.Equal(t, int64(6442450944), queue.MaxPendingBytes)
+	require.Equal(t, 96, queue.WorkerCeiling)
+	require.Equal(t, 9, queue.MaxAttempts)
+	require.Equal(t, 4, queue.RetryBaseSeconds)
+	require.Equal(t, 90, queue.RetryMaxSeconds)
+	require.Equal(t, 2200, queue.LeaseTTLSeconds)
+	require.Equal(t, 2500, queue.StaleAfterSeconds)
+	require.Equal(t, "test:image_jobs:ready", queue.ReadyKey)
+	require.Equal(t, "test:image_jobs:delayed", queue.DelayedKey)
+	require.Equal(t, "test:image_jobs:active", queue.ActiveKey)
+	require.Equal(t, "test:image_jobs:paused", queue.PauseKey)
+	require.Equal(t, "test:image_jobs:inflight:", queue.InflightKeyPrefix)
+	require.Equal(t, "test:image_jobs:idem:", queue.IdempotencyKeyPrefix)
 }

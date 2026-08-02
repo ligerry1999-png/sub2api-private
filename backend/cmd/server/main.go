@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -163,12 +164,20 @@ func runMainServer() {
 		}
 	}
 
-	// 启动服务器
+	// 先绑定端口，再启动后台图片任务。这样恢复的任务不会在 HTTP
+	// 服务还没真正可用时自调失败并消耗重试次数。
+	listener, err := net.Listen("tcp", app.Server.Addr)
+	if err != nil {
+		log.Fatalf("Failed to bind server: %v", err)
+	}
 	go func() {
-		if err := app.Server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := app.Server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Fatalf("Failed to start server: %v", err)
 		}
 	}()
+	if app.OpenAIGateway != nil {
+		app.OpenAIGateway.StartImageJobDispatcher()
+	}
 
 	log.Printf("Server started on %s", app.Server.Addr)
 
@@ -178,6 +187,9 @@ func runMainServer() {
 	<-quit
 
 	log.Println("Shutting down server...")
+	if app.OpenAIGateway != nil {
+		app.OpenAIGateway.StopImageJobDispatcher()
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

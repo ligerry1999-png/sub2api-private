@@ -163,35 +163,82 @@ jobs:
           upsert_env "$RUNTIME_DIR/.env" "IMAGE_LOGS_RETENTION_DAYS" "7"
           upsert_env "$RUNTIME_DIR/.env" "IMAGE_LOGS_CLEANUP_INTERVAL_SECONDS" "3600"
           upsert_env "$RUNTIME_DIR/.env" "IMAGE_LOGS_CLEANUP_BATCH_SIZE" "500"
-          upsert_env "$RUNTIME_DIR/.env" "ASYNC_IMAGE_MAX_CONCURRENT" "4"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_ASYNC_IMAGE_QUEUE_ENABLED" "true"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_ASYNC_IMAGE_QUEUE_MAX_PENDING_TASKS" "2000"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_ASYNC_IMAGE_QUEUE_MAX_PENDING_BYTES" "5368709120"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_ASYNC_IMAGE_QUEUE_WORKER_CEILING" "64"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_ASYNC_IMAGE_QUEUE_MAX_ATTEMPTS" "8"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_ASYNC_IMAGE_QUEUE_RETRY_BASE_SECONDS" "3"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_ASYNC_IMAGE_QUEUE_RETRY_MAX_SECONDS" "60"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_ASYNC_IMAGE_QUEUE_LEASE_TTL_SECONDS" "2100"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_ASYNC_IMAGE_QUEUE_STALE_AFTER_SECONDS" "2400"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_ASYNC_IMAGE_QUEUE_READY_KEY" "image_jobs:queue:ready"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_ASYNC_IMAGE_QUEUE_DELAYED_KEY" "image_jobs:queue:delayed"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_ASYNC_IMAGE_QUEUE_ACTIVE_KEY" "image_jobs:queue:active"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_ASYNC_IMAGE_QUEUE_PAUSE_KEY" "image_jobs:queue:paused"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_ASYNC_IMAGE_QUEUE_INFLIGHT_KEY_PREFIX" "image_jobs:queue:inflight:"
+          upsert_env "$RUNTIME_DIR/.env" "GATEWAY_ASYNC_IMAGE_QUEUE_IDEMPOTENCY_KEY_PREFIX" "image_jobs:queue:idem:"
+          sed -i '/^ASYNC_IMAGE_MAX_CONCURRENT=/d' "$RUNTIME_DIR/.env"
           upsert_env "$RUNTIME_DIR/.env" "IMAGE_JOBS_RETENTION_DAYS" "2"
           upsert_env "$RUNTIME_DIR/.env" "CHATGPT2API_IMAGES_RETENTION_DAYS" "3"
 
           cd "$DEPLOY_DIR"
 
-          wait_for_image_jobs_idle() {
+          IMAGE_QUEUE_PAUSE_KEY="$(grep '^GATEWAY_ASYNC_IMAGE_QUEUE_PAUSE_KEY=' "$RUNTIME_DIR/.env" | tail -n 1 | cut -d= -f2-)"
+          test -n "$IMAGE_QUEUE_PAUSE_KEY"
+          queue_pause_set=false
+
+          pause_image_queue() {
+            pause_result="$(docker exec sub2api-private-redis redis-cli SET "$IMAGE_QUEUE_PAUSE_KEY" "$RELEASE_SHA" EX 3600)"
+            queue_pause_set=true
+            test "$pause_result" = "OK"
+            echo "Paused image-job dequeue; new submissions remain queued"
+          }
+
+          resume_image_queue() {
+            if [ "$queue_pause_set" = "true" ]; then
+              docker exec sub2api-private-redis redis-cli DEL "$IMAGE_QUEUE_PAUSE_KEY" >/dev/null || true
+              queue_pause_set=false
+              echo "Resumed image-job dequeue"
+            fi
+          }
+
+          resume_queue_on_pre_restart_failure() {
+            exit_code="$?"
+            trap - ERR
+            resume_image_queue
+            exit "$exit_code"
+          }
+          trap resume_queue_on_pre_restart_failure ERR
+
+          pause_image_queue
+
+          wait_for_running_image_jobs() {
             jobs_root="$RUNTIME_DIR/data/image_jobs"
             if [ ! -d "$jobs_root" ]; then
               echo "No image job directory found; continuing deployment"
               return 0
             fi
+            pending_jobs="$({ find "$jobs_root" -name meta.json -type f -exec \
+              grep -lE '"status"[[:space:]]*:[[:space:]]*"pending"' {} + 2>/dev/null || true; } | wc -l | tr -d ' ')"
+            echo "Preserving ${pending_jobs} pending image job(s) for recovery after restart"
             idle_checks=0
             for attempt in $(seq 1 120); do
-              active_jobs="$({ find "$jobs_root" -name meta.json -mmin -120 -type f -exec \
-                grep -lE '"status"[[:space:]]*:[[:space:]]*"(pending|running)"' {} + 2>/dev/null || true; } | wc -l | tr -d ' ')"
-              if [ "$active_jobs" = "0" ]; then
+              running_jobs="$({ find "$jobs_root" -name meta.json -type f -exec \
+                grep -lE '"status"[[:space:]]*:[[:space:]]*"running"' {} + 2>/dev/null || true; } | wc -l | tr -d ' ')"
+              if [ "$running_jobs" = "0" ]; then
                 idle_checks=$((idle_checks + 1))
                 if [ "$idle_checks" -ge 2 ]; then
-                  echo "Image jobs are idle; continuing deployment"
+                  echo "No image jobs are running; continuing deployment with pending jobs preserved"
                   return 0
                 fi
               else
                 idle_checks=0
-                echo "Waiting for ${active_jobs} active image job(s) before restart"
+                echo "Waiting for ${running_jobs} running image job(s) before restart"
               fi
               sleep 15
             done
-            echo "Timed out waiting for image jobs to become idle; deployment stopped before restart"
+            echo "Timed out waiting for running image jobs; deployment stopped before restart"
             return 1
           }
 
@@ -224,7 +271,7 @@ jobs:
             echo "Verified PostgreSQL backup: $POSTGRES_BACKUP_FILE"
           }
 
-          wait_for_image_jobs_idle
+          wait_for_running_image_jobs
           create_verified_postgres_backup
 
           previous_image="$(docker inspect -f '{{.Config.Image}}' sub2api-private 2>/dev/null || true)"
@@ -244,6 +291,7 @@ jobs:
           rollback_sub2api() {
             exit_code="$?"
             trap - ERR
+            resume_image_queue
             if [ "$rollback_available" = "true" ]; then
               echo "Deployment failed; restoring the rehearsal-verified previous image..."
               upsert_env "$RUNTIME_DIR/.env" "SUB2API_IMAGE" "$rollback_image"
@@ -298,6 +346,7 @@ jobs:
             echo "Sub2API container is not healthy: ${container_health:-unknown}"
             false
           }
+          resume_image_queue
 
           expected_version="$(tr -d '\r\n' < "$REPO_DIR/backend/cmd/server/VERSION")"
           test "$(tr -d '\r\n' < "$REPO_DIR/.release-commit")" = "$RELEASE_SHA"

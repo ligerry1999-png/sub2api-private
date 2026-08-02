@@ -875,6 +875,28 @@ type ImageConcurrencyConfig struct {
 	MaxWaitingRequests int `mapstructure:"max_waiting_requests"`
 }
 
+// AsyncImageQueueConfig controls admission and durable background execution for
+// the asynchronous image endpoints. The queue capacity is intentionally
+// separate from account concurrency: accepted jobs wait here, while the normal
+// gateway scheduler remains the source of truth for per-account execution slots.
+type AsyncImageQueueConfig struct {
+	Enabled              bool   `mapstructure:"enabled"`
+	MaxPendingTasks      int    `mapstructure:"max_pending_tasks"`
+	MaxPendingBytes      int64  `mapstructure:"max_pending_bytes"`
+	WorkerCeiling        int    `mapstructure:"worker_ceiling"`
+	MaxAttempts          int    `mapstructure:"max_attempts"`
+	RetryBaseSeconds     int    `mapstructure:"retry_base_seconds"`
+	RetryMaxSeconds      int    `mapstructure:"retry_max_seconds"`
+	LeaseTTLSeconds      int    `mapstructure:"lease_ttl_seconds"`
+	StaleAfterSeconds    int    `mapstructure:"stale_after_seconds"`
+	ReadyKey             string `mapstructure:"ready_key"`
+	DelayedKey           string `mapstructure:"delayed_key"`
+	ActiveKey            string `mapstructure:"active_key"`
+	PauseKey             string `mapstructure:"pause_key"`
+	InflightKeyPrefix    string `mapstructure:"inflight_key_prefix"`
+	IdempotencyKeyPrefix string `mapstructure:"idempotency_key_prefix"`
+}
+
 type GatewayImageWorkerConfig struct {
 	// Enabled: OAuth 图片请求是否优先转发给内部图片工人（例如 ChatGPT2API）
 	Enabled bool `mapstructure:"enabled"`
@@ -948,6 +970,8 @@ type GatewayConfig struct {
 	OpenAIProxyStreamCircuit GatewayOpenAIProxyStreamCircuitConfig `mapstructure:"openai_proxy_stream_circuit"`
 	// ImageConcurrency: 图片生成独立并发限制配置（默认关闭）
 	ImageConcurrency ImageConcurrencyConfig `mapstructure:"image_concurrency"`
+	// AsyncImageQueue: 异步图片持久队列；只控制接收容量和 worker 上限，不替代账号并发槽。
+	AsyncImageQueue AsyncImageQueueConfig `mapstructure:"async_image_queue"`
 	// ImageWorker: OAuth 图片请求的内部工人桥接配置（默认关闭）
 	ImageWorker GatewayImageWorkerConfig `mapstructure:"image_worker"`
 
@@ -2329,6 +2353,21 @@ func setDefaults() {
 	viper.SetDefault("gateway.image_concurrency.overflow_mode", ImageConcurrencyOverflowModeReject)
 	viper.SetDefault("gateway.image_concurrency.wait_timeout_seconds", 30)
 	viper.SetDefault("gateway.image_concurrency.max_waiting_requests", 100)
+	viper.SetDefault("gateway.async_image_queue.enabled", true)
+	viper.SetDefault("gateway.async_image_queue.max_pending_tasks", 2000)
+	viper.SetDefault("gateway.async_image_queue.max_pending_bytes", int64(5*1024*1024*1024))
+	viper.SetDefault("gateway.async_image_queue.worker_ceiling", 64)
+	viper.SetDefault("gateway.async_image_queue.max_attempts", 8)
+	viper.SetDefault("gateway.async_image_queue.retry_base_seconds", 3)
+	viper.SetDefault("gateway.async_image_queue.retry_max_seconds", 60)
+	viper.SetDefault("gateway.async_image_queue.lease_ttl_seconds", 2100)
+	viper.SetDefault("gateway.async_image_queue.stale_after_seconds", 2400)
+	viper.SetDefault("gateway.async_image_queue.ready_key", "image_jobs:queue:ready")
+	viper.SetDefault("gateway.async_image_queue.delayed_key", "image_jobs:queue:delayed")
+	viper.SetDefault("gateway.async_image_queue.active_key", "image_jobs:queue:active")
+	viper.SetDefault("gateway.async_image_queue.pause_key", "image_jobs:queue:paused")
+	viper.SetDefault("gateway.async_image_queue.inflight_key_prefix", "image_jobs:queue:inflight:")
+	viper.SetDefault("gateway.async_image_queue.idempotency_key_prefix", "image_jobs:queue:idem:")
 	viper.SetDefault("gateway.image_worker.enabled", false)
 	viper.SetDefault("gateway.image_worker.base_url", "")
 	viper.SetDefault("gateway.image_worker.token", "")
@@ -3197,6 +3236,54 @@ func (c *Config) Validate() error {
 	}
 	if c.Gateway.ImageConcurrency.MaxWaitingRequests < 0 {
 		return fmt.Errorf("gateway.image_concurrency.max_waiting_requests must be non-negative")
+	}
+	queue := c.Gateway.AsyncImageQueue
+	if queue.MaxPendingTasks < 0 {
+		return fmt.Errorf("gateway.async_image_queue.max_pending_tasks must be non-negative")
+	}
+	if queue.MaxPendingBytes < 0 {
+		return fmt.Errorf("gateway.async_image_queue.max_pending_bytes must be non-negative")
+	}
+	if queue.WorkerCeiling < 0 {
+		return fmt.Errorf("gateway.async_image_queue.worker_ceiling must be non-negative")
+	}
+	if queue.MaxAttempts < 0 {
+		return fmt.Errorf("gateway.async_image_queue.max_attempts must be non-negative")
+	}
+	if queue.RetryBaseSeconds < 0 {
+		return fmt.Errorf("gateway.async_image_queue.retry_base_seconds must be non-negative")
+	}
+	if queue.RetryMaxSeconds < 0 {
+		return fmt.Errorf("gateway.async_image_queue.retry_max_seconds must be non-negative")
+	}
+	if queue.LeaseTTLSeconds < 0 {
+		return fmt.Errorf("gateway.async_image_queue.lease_ttl_seconds must be non-negative")
+	}
+	if queue.StaleAfterSeconds < 0 {
+		return fmt.Errorf("gateway.async_image_queue.stale_after_seconds must be non-negative")
+	}
+	if queue.Enabled {
+		if queue.MaxPendingTasks == 0 || queue.MaxPendingBytes == 0 || queue.WorkerCeiling == 0 || queue.MaxAttempts == 0 || queue.RetryBaseSeconds == 0 || queue.RetryMaxSeconds == 0 || queue.LeaseTTLSeconds == 0 || queue.StaleAfterSeconds == 0 {
+			return fmt.Errorf("gateway.async_image_queue enabled limits and timeouts must be positive")
+		}
+		if queue.RetryMaxSeconds < queue.RetryBaseSeconds {
+			return fmt.Errorf("gateway.async_image_queue.retry_max_seconds must be greater than or equal to retry_base_seconds")
+		}
+		if queue.StaleAfterSeconds < queue.LeaseTTLSeconds {
+			return fmt.Errorf("gateway.async_image_queue.stale_after_seconds must be greater than or equal to lease_ttl_seconds")
+		}
+		for key, value := range map[string]string{
+			"ready_key":              queue.ReadyKey,
+			"delayed_key":            queue.DelayedKey,
+			"active_key":             queue.ActiveKey,
+			"pause_key":              queue.PauseKey,
+			"inflight_key_prefix":    queue.InflightKeyPrefix,
+			"idempotency_key_prefix": queue.IdempotencyKeyPrefix,
+		} {
+			if strings.TrimSpace(value) == "" {
+				return fmt.Errorf("gateway.async_image_queue.%s must not be empty when enabled", key)
+			}
+		}
 	}
 	if c.Gateway.ImageWorker.TimeoutSeconds < 0 {
 		return fmt.Errorf("gateway.image_worker.timeout_seconds must be non-negative")

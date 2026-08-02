@@ -73,7 +73,7 @@ delete_old_files() {
   find "$dir" -mindepth 1 -type d -empty -delete 2>/dev/null || true
 }
 
-delete_old_dirs() {
+delete_old_terminal_image_job_dirs() {
   dir="$1"
   days="$2"
   label="$3"
@@ -82,9 +82,23 @@ delete_old_dirs() {
     log "$label skipped: missing dir=$dir"
     return
   fi
-  count="$(find "$dir" -mindepth 1 -maxdepth 1 -type d -mmin +"$minutes" 2>/dev/null | wc -l | tr -d ' ')"
-  log "$label deleting dirs: dir=$dir retention_days=$days count=$count"
-  find "$dir" -mindepth 1 -maxdepth 1 -type d -mmin +"$minutes" -print0 2>/dev/null | xargs -0 -r rm -rf --
+  count="$(find "$dir" -mindepth 1 -maxdepth 1 -type d -mmin +"$minutes" -exec sh -c '
+    for job_dir do
+      meta="$job_dir/meta.json"
+      if [ -f "$meta" ] && grep -Eq "\"status\"[[:space:]]*:[[:space:]]*\"(success|failed|canceled)\"" "$meta"; then
+        printf "%s\n" "$job_dir"
+      fi
+    done
+  ' sh {} + 2>/dev/null | wc -l | tr -d ' ')"
+  log "$label deleting terminal dirs only: dir=$dir retention_days=$days count=$count"
+  find "$dir" -mindepth 1 -maxdepth 1 -type d -mmin +"$minutes" -exec sh -c '
+    for job_dir do
+      meta="$job_dir/meta.json"
+      if [ -f "$meta" ] && grep -Eq "\"status\"[[:space:]]*:[[:space:]]*\"(success|failed|canceled)\"" "$meta"; then
+        rm -rf -- "$job_dir"
+      fi
+    done
+  ' sh {} + 2>/dev/null
 }
 
 sub2api_data_dir="$(read_env_value SUB2API_DATA_DIR "$RUNTIME_DIR/data")"
@@ -94,7 +108,7 @@ chatgpt2api_retention="$(positive_int_or_default "$(read_env_value CHATGPT2API_I
 
 require_safe_target "$sub2api_data_dir/image_jobs" "image_jobs" "sub2api_image_jobs"
 require_safe_target "$CHATGPT2API_IMAGE_DIR" "images" "chatgpt2api_images"
-delete_old_dirs "$sub2api_data_dir/image_jobs" "$image_jobs_retention" "sub2api_image_jobs"
+delete_old_terminal_image_job_dirs "$sub2api_data_dir/image_jobs" "$image_jobs_retention" "sub2api_image_jobs"
 delete_old_files "$CHATGPT2API_IMAGE_DIR" "$chatgpt2api_retention" "chatgpt2api_images"
 
 log "storage cleanup finished"

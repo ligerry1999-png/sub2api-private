@@ -488,6 +488,37 @@ gateway:
     # Max image requests waiting in this process when overflow_mode=wait, 0=unlimited
     # wait 模式当前进程允许排队等待的图片请求数，0=不限制
     max_waiting_requests: 100
+  # Durable admission queue for asynchronous image jobs. This queue accepts
+  # work first; actual upstream concurrency is still enforced by each account's
+  # configured concurrency slots in the normal gateway scheduler.
+  # 异步生图持久队列：先接收并保存任务，真正的上游并发仍以账号槽位为准。
+  async_image_queue:
+    enabled: true
+    # Admission is rejected only when either the task or byte budget is full.
+    # 只有等待任务数或请求体总字节达到上限时才拒绝新任务。
+    max_pending_tasks: 2000
+    max_pending_bytes: 5368709120
+    # Safety ceiling for lightweight queue workers; not a replacement for
+    # account concurrency and must not be interpreted as an admission limit.
+    # worker 安全上限，不是接收上限，也不覆盖账号并发配置。
+    worker_ceiling: 64
+    max_attempts: 8
+    retry_base_seconds: 3
+    retry_max_seconds: 60
+    # A normal image task can run for 30 minutes. The lease exceeds that
+    # timeout, and stale recovery waits longer still.
+    # lease 覆盖正常最长生图时间，超过 stale_after 后才允许恢复。
+    lease_ttl_seconds: 2100
+    stale_after_seconds: 2400
+    ready_key: "image_jobs:queue:ready"
+    delayed_key: "image_jobs:queue:delayed"
+    active_key: "image_jobs:queue:active"
+    # Deployments set this temporary key to pause dequeue while continuing to
+    # accept new jobs. The new dispatcher removes it on startup.
+    # 发布时临时暂停领取新任务，但仍继续接收并保存新任务。
+    pause_key: "image_jobs:queue:paused"
+    inflight_key_prefix: "image_jobs:queue:inflight:"
+    idempotency_key_prefix: "image_jobs:queue:idem:"
   # SSE max line size in bytes (default: 40MB)
   # SSE 单行最大字节数（默认 40MB）
   max_line_size: 41943040
