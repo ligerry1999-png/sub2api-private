@@ -96,6 +96,11 @@ run_application() {
     if docker exec "$active_app" wget -q -T 5 -O /dev/null http://127.0.0.1:8080/health; then
       build_info="$(docker exec "$active_app" /app/sub2api -version 2>&1)"
       printf '%s\n' "$build_info" | grep -F "commit: ${sha}"
+      case "$phase" in
+        candidate-*)
+          docker logs "$active_app" 2>&1 | grep -F '[StartupCheck] image log service connected' >/dev/null
+          ;;
+      esac
       docker rm -f "$active_app" >/dev/null
       active_app=""
       return 0
@@ -145,7 +150,11 @@ docker exec "$postgres" psql -U sub2api -d sub2api -v ON_ERROR_STOP=1 -Atqc \
   "SELECT to_regclass('public.passkey_user_handles') IS NOT NULL AND to_regclass('public.passkey_credentials') IS NOT NULL;" | grep -qx t
 
 after_migrations="$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc 'SELECT COUNT(*) FROM schema_migrations;')"
-test "$after_migrations" -gt "$before_migrations"
+if git -C "$CANDIDATE_DIR" diff --quiet "$PREVIOUS_SHA" "$CANDIDATE_SHA" -- backend/migrations; then
+  test "$after_migrations" -eq "$before_migrations"
+else
+  test "$after_migrations" -gt "$before_migrations"
+fi
 
 run_application "$previous_image" "$PREVIOUS_SHA" previous-rollback
 test "$(database_snapshot)" = "$before_snapshot"
