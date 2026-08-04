@@ -528,6 +528,16 @@ func (s *OpenAIGatewayService) SetImageLogService(imageLogService *ImageLogServi
 	s.imageLogService = imageLogService
 }
 
+func (s *OpenAIGatewayService) validateImageLogDependency() error {
+	if s == nil {
+		return errors.New("openai gateway service is nil")
+	}
+	if s.imageLogService == nil {
+		return errors.New("image log service is not connected")
+	}
+	return nil
+}
+
 // ResolveChannelMapping 解析渠道级模型映射（代理到 ChannelService）
 func (s *OpenAIGatewayService) ResolveChannelMapping(ctx context.Context, groupID int64, model string) ChannelMappingResult {
 	if s.channelService == nil {

@@ -99,7 +99,7 @@ fi
 test "$actual_migration_sha" = "$expected_migration_sha" || \
   fail "backend/migrations/136_image_logs.sql checksum changed"
 
-test "$(tr -d '\r\n' < backend/cmd/server/VERSION)" = "0.1.169-private.2" || \
+test "$(tr -d '\r\n' < backend/cmd/server/VERSION)" = "0.1.169-private.3" || \
   fail "private version marker changed unexpectedly"
 
 printf 'private upgrade guards passed\n'
