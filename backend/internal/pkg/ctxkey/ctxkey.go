@@ -53,6 +53,12 @@ const (
 	// OpenAIImageWorkerFallbackAllowed 标识当前图片请求允许从 ChatGPT2API worker 回退到 Sub2API native。
 	OpenAIImageWorkerFallbackAllowed Key = "ctx_openai_image_worker_fallback_allowed"
 
+	// OpenAIImagesEndpoint 标识请求是从 /v1/images/* 入站的。
+	// 与 OpenAIImageGenerationIntent 的区别：后者只表示"这次请求会生图"，
+	// /v1/responses 带图片模型时也会置位；本 key 只在专用生图端点置位，
+	// 用于区分"用错端点"与"端点用对了但账号没能力"。
+	OpenAIImagesEndpoint Key = "ctx_openai_images_endpoint"
+
 	// Group 认证后的分组信息，由 API Key 认证中间件设置
 	Group Key = "ctx_group"
 
