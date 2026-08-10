@@ -3,7 +3,7 @@ name: Database Rehearsal
 on:
   push:
     branches:
-      - upgrade/v0.1.169-private
+      - upgrade/v0.1.173-private
   workflow_dispatch:
 
 concurrency:

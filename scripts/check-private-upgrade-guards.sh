@@ -27,6 +27,9 @@ workflow=".github/workflows/deploy-server.yml"
 compose="deploy/tanzhongyu/docker-compose.yml"
 env_example="deploy/tanzhongyu/.env.example"
 gateway_routes="backend/internal/server/routes/gateway.go"
+setting_parse="backend/internal/service/setting_parse.go"
+grok_oauth="backend/internal/service/grok_oauth_service.go"
+database_rehearsal="deploy/database-rehearsal.sh"
 
 assert_contains "$workflow" "workflow_dispatch:"
 assert_contains "$workflow" "migration_rehearsal_sha:"
@@ -85,7 +88,19 @@ assert_contains "$gateway_routes" 'codexDirect.POST("/responses/*subpath", guard
 assert_contains "$compose" 'no-new-privileges:true'
 assert_contains "Dockerfile" 'LABEL org.opencontainers.image.revision="${COMMIT}"'
 test -f .github/workflows/database-rehearsal.yml || fail "database rehearsal workflow is missing"
-test -f deploy/database-rehearsal.sh || fail "database rehearsal script is missing"
+test -f "$database_rehearsal" || fail "database rehearsal script is missing"
+assert_contains ".github/workflows/database-rehearsal.yml" "upgrade/v0.1.173-private"
+assert_contains "$database_rehearsal" 'docker network create --internal "$network"'
+assert_contains "$database_rehearsal" "groups_video_price_backup_220"
+assert_contains "$database_rehearsal" "restore_production_dump"
+
+# Grok ships dormant and fail-closed until the operator explicitly connects an
+# eligible account. Cross-vendor model rewriting must never turn on implicitly,
+# and raw password login stays disabled even if an old config key remains.
+assert_contains "$setting_parse" 'SettingKeyGrokCrossClientModelMapEnabled: "false"'
+assert_contains "$setting_parse" 'strings.EqualFold('
+assert_contains "$grok_oauth" "func (s *GrokOAuthService) passwordAuthEnabled() bool {"
+assert_contains "$grok_oauth" "return false"
 
 assert_contains "backend/go.mod" "golang.org/x/image v0.43.0"
 assert_contains "backend/go.mod" "golang.org/x/text v0.39.0"
@@ -99,7 +114,7 @@ fi
 test "$actual_migration_sha" = "$expected_migration_sha" || \
   fail "backend/migrations/136_image_logs.sql checksum changed"
 
-test "$(tr -d '\r\n' < backend/cmd/server/VERSION)" = "0.1.172-private.1" || \
+test "$(tr -d '\r\n' < backend/cmd/server/VERSION)" = "0.1.173-private.1" || \
   fail "private version marker changed unexpectedly"
 
 printf 'private upgrade guards passed\n'

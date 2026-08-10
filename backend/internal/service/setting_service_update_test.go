@@ -903,3 +903,15 @@ func TestSettingService_StalePasskeyTrueWithoutConfigReportsDisabled(t *testing.
 	require.NoError(t, err)
 	require.False(t, settings.PasskeyEnabled)
 }
+
+func TestSettingService_ParseSettings_GrokCrossClientMappingIsStrictOptIn(t *testing.T) {
+	svc := NewSettingService(&settingUpdateRepoStub{}, &config.Config{})
+
+	require.False(t, svc.parseSettings(map[string]string{}).GrokCrossClientModelMapEnabled)
+	require.False(t, svc.parseSettings(map[string]string{
+		SettingKeyGrokCrossClientModelMapEnabled: "false",
+	}).GrokCrossClientModelMapEnabled)
+	require.True(t, svc.parseSettings(map[string]string{
+		SettingKeyGrokCrossClientModelMapEnabled: "true",
+	}).GrokCrossClientModelMapEnabled)
+}
