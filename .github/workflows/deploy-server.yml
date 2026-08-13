@@ -20,6 +20,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   deploy:
@@ -53,6 +54,24 @@ jobs:
             echo "migration_rehearsal_sha must equal the exact deployed commit: $GITHUB_SHA"
             exit 1
           }
+
+      - name: Verify successful database rehearsal for exact commit
+        if: ${{ inputs.deploy == true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rehearsal_run_id="$(gh api --method GET \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/database-rehearsal.yml/runs" \
+            -f head_sha="$GITHUB_SHA" \
+            -f status=success \
+            -f per_page=1 \
+            --jq '.workflow_runs[0].id // empty')"
+          test -n "$rehearsal_run_id" || {
+            echo "No successful Database Rehearsal run exists for exact commit $GITHUB_SHA"
+            exit 1
+          }
+          echo "Verified Database Rehearsal run: $rehearsal_run_id"
 
       - name: Configure SSH
         if: ${{ inputs.deploy == true }}

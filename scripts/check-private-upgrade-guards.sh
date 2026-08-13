@@ -35,6 +35,9 @@ assert_contains "$workflow" "workflow_dispatch:"
 assert_contains "$workflow" "migration_rehearsal_sha:"
 assert_contains "$workflow" 'if: ${{ inputs.deploy == true }}'
 assert_contains "$workflow" 'test "$GITHUB_REF" = "refs/heads/main"'
+assert_contains "$workflow" "actions: read"
+assert_contains "$workflow" "Verify successful database rehearsal for exact commit"
+assert_contains "$workflow" "actions/workflows/database-rehearsal.yml/runs"
 assert_contains "$workflow" "pg_dump --format=custom"
 assert_contains "$workflow" "pg_restore --list"
 assert_contains "$workflow" "docker load -i /tmp/sub2api-image.tgz"
