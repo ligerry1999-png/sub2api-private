@@ -71,6 +71,13 @@ func RegisterGatewayRoutes(
 			h.OpenAIGateway.CodexModels(c)
 			return
 		}
+		if c.Query("client_version") != "" {
+			switch getGroupPlatform(c) {
+			case service.PlatformGrok, service.PlatformComposite:
+				h.Gateway.CodexCompatibleModels(c)
+				return
+			}
+		}
 		h.Gateway.Models(c)
 	}
 	isOpenAIOnlyEndpointGatewayPlatform := func(c *gin.Context) bool {
@@ -346,6 +353,14 @@ func RegisterGatewayRoutes(
 			}
 			h.Gateway.WebSearch(c)
 		})
+		gateway.POST("/x_search", func(c *gin.Context) {
+			if getGroupPlatform(c) != service.PlatformGrok {
+				service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+				c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"type": "not_found_error", "message": "X Search API is not supported for this platform"}})
+				return
+			}
+			h.Gateway.XSearch(c)
+		})
 	}
 
 	// Gemini 原生 API 兼容层（Gemini SDK/CLI 直连）
@@ -501,6 +516,14 @@ func RegisterGatewayRoutes(
 			return
 		}
 		h.Gateway.WebSearch(c)
+	})
+	r.POST("/x_search", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, func(c *gin.Context) {
+		if getGroupPlatform(c) != service.PlatformGrok {
+			service.MarkOpsClientBusinessLimited(c, service.OpsClientBusinessLimitedReasonLocalFeatureGate)
+			c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"type": "not_found_error", "message": "X Search API is not supported for this platform"}})
+			return
+		}
+		h.Gateway.XSearch(c)
 	})
 
 	// Antigravity 模型列表

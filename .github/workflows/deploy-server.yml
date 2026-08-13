@@ -381,6 +381,10 @@ jobs:
           probe_custom_route GET /v1/image-jobs/imgjob_probe 401
           probe_custom_route GET /v1/image-jobs/imgjob_probe/result 401
           probe_custom_route POST /v1/image-jobs/imgjob_probe/cancel 401
+          probe_custom_route POST /v1/responses 401 '{"model":"gpt-5.6-sol","input":"probe"}'
+          probe_custom_route POST /v1/x_search 401 '{"query":"probe"}'
+          probe_custom_route POST /v1/tts 401 '{"model":"grok-voice-latest","input":"probe"}'
+          probe_custom_route POST /v1/videos 401 '{"model":"grok-imagine-video","prompt":"probe"}'
 
           if command -v nginx >/dev/null 2>&1; then
             cp "$DEPLOY_DIR/nginx-sub2api-prod.conf" /etc/nginx/sites-available/sub2api

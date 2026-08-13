@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"net/textproto"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/gin-gonic/gin"
@@ -25,6 +27,13 @@ type failingOpenAIImageWriter struct {
 	failAfter int
 	writes    int
 }
+
+type openAIImagesReadErrorBody struct {
+	err error
+}
+
+func (b *openAIImagesReadErrorBody) Read([]byte) (int, error) { return 0, b.err }
+func (b *openAIImagesReadErrorBody) Close() error             { return nil }
 
 func (w *failingOpenAIImageWriter) Write(p []byte) (int, error) {
 	if w.writes >= w.failAfter {
@@ -1085,6 +1094,168 @@ func TestOpenAIGatewayServiceForwardImages_OAuthNonStreamServerErrorReturnsFailo
 	require.Equal(t, "failover", events[0].Kind)
 	require.Equal(t, account.ID, events[0].AccountID)
 	require.Equal(t, http.StatusBadGateway, events[0].UpstreamStatusCode)
+}
+
+func TestOpenAIImagesOAuthBodyReadTransportErrorFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"X-Request-Id": []string{"req_h2_read_failure"},
+			"X-Upstream":   []string{"preserved"},
+		},
+		Body: &openAIImagesReadErrorBody{err: errors.New("stream error: stream ID 11; INTERNAL_ERROR; received from peer")},
+	}
+	account := &Account{ID: 5400, Name: "openai-oauth", Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	svc := &OpenAIGatewayService{}
+
+	_, _, _, readErr := svc.handleOpenAIImagesOAuthNonStreamingResponse(
+		resp, c, account, nil, "b64_json", "gpt-image-2", time.Time{}, time.Time{},
+	)
+	require.Error(t, readErr)
+	err := svc.handleOpenAIImagesOAuthResponseError(context.Background(), c, account, "gpt-image-2", "https://api.openai.com/v1/responses", resp, OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c), readErr)
+
+	var failoverErr *UpstreamFailoverError
+	require.ErrorAs(t, err, &failoverErr)
+	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
+	require.JSONEq(t, `{"error":{"type":"upstream_error","code":"upstream_http2_stream_error","message":"Upstream HTTP/2 stream failed"}}`, string(failoverErr.ResponseBody))
+	require.Equal(t, "req_h2_read_failure", failoverErr.ResponseHeaders.Get("x-request-id"))
+	require.Equal(t, "preserved", failoverErr.ResponseHeaders.Get("x-upstream"))
+	resp.Header.Set("X-Upstream", "mutated")
+	require.Equal(t, "preserved", failoverErr.ResponseHeaders.Get("x-upstream"))
+
+	rawEvents, ok := c.Get(OpsUpstreamErrorsKey)
+	require.True(t, ok)
+	events, ok := rawEvents.([]*OpsUpstreamErrorEvent)
+	require.True(t, ok)
+	require.Len(t, events, 1)
+	require.Equal(t, "failover", events[0].Kind)
+	require.Equal(t, "req_h2_read_failure", events[0].UpstreamRequestID)
+	require.Equal(t, "Upstream HTTP/2 stream failed", events[0].Message)
+}
+
+func TestOpenAIImagesOAuthNonStreamingSuccessWritesPrivateImageLog(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	repo := &fakeImageLogRepository{}
+	imageLogService, _ := newTestImageLogService(t, repo)
+	svc := &OpenAIGatewayService{imageLogService: imageLogService}
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	c.Set("api_key", &APIKey{
+		ID:   42,
+		Name: "private-image-key",
+		User: &User{ID: 7, Email: "image-log@example.com"},
+	})
+
+	pngBase64 := base64.StdEncoding.EncodeToString(testPNGBytes(t))
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"Content-Type": []string{"text/event-stream"},
+			"X-Request-Id": []string{"req_private_image_log"},
+		},
+		Body: io.NopCloser(strings.NewReader(
+			"data: {\"type\":\"response.completed\",\"response\":{\"created_at\":1710000000,\"output\":[{\"type\":\"image_generation_call\",\"result\":\"" + pngBase64 + "\",\"output_format\":\"png\",\"quality\":\"high\",\"size\":\"1024x1024\"}]}}\n\n" +
+				"data: [DONE]\n\n",
+		)),
+	}
+	parsed := &OpenAIImagesRequest{
+		Endpoint:       openAIImagesGenerationsEndpoint,
+		Model:          "gpt-image-2",
+		Prompt:         "private image log integration",
+		N:              1,
+		Size:           "1024x1024",
+		SizeTier:       "1k",
+		Quality:        "high",
+		ResponseFormat: "b64_json",
+	}
+	account := &Account{ID: 135, Name: "openai-oauth", Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+
+	_, imageCount, _, err := svc.handleOpenAIImagesOAuthNonStreamingResponse(
+		resp, c, account, parsed, "b64_json", "gpt-image-2", time.Now(), time.Now(),
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, 1, imageCount)
+	require.Len(t, repo.created, 1)
+	require.Equal(t, "req_private_image_log", repo.created[0].RequestID)
+	require.Equal(t, imageLogSourceSub2API, repo.created[0].Source)
+	require.Equal(t, "private image log integration", repo.created[0].Prompt)
+	require.Len(t, repo.created[0].Images, 1)
+	require.NotEmpty(t, repo.created[0].Images[0].FilePath)
+	require.NotEmpty(t, repo.created[0].Images[0].ThumbnailPath)
+}
+
+func TestOpenAIImagesOAuthBodyReadErrorsNotMisclassified(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "context canceled", err: context.Canceled},
+		{name: "response too large", err: fmt.Errorf("%w: limit=1", ErrUpstreamResponseBodyTooLarge)},
+		{name: "semantic error", err: &OpenAIImagesUpstreamError{StatusCode: http.StatusBadRequest, ErrorType: "invalid_request_error", Code: "invalid_value", Message: "bad image request"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(rec)
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+			resp := &http.Response{StatusCode: http.StatusOK, Header: make(http.Header)}
+			err := tt.err
+			if tt.name != "semantic error" && shouldClassifyOpenAIUpstreamStreamReadError(err, c.Request.Context()) {
+				err = newOpenAIUpstreamStreamReadError(err)
+			}
+
+			got := (&OpenAIGatewayService{}).handleOpenAIImagesOAuthResponseError(context.Background(), c, &Account{Platform: PlatformOpenAI}, "gpt-image-2", "", resp, OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c), err)
+			var failoverErr *UpstreamFailoverError
+			require.False(t, errors.As(got, &failoverErr))
+			require.ErrorIs(t, got, tt.err)
+		})
+	}
+}
+
+func TestOpenAIImagesOAuthTransportErrorAfterDownstreamWriteDoesNotFailover(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	before := OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c)
+	_, writeErr := c.Writer.Write([]byte("downstream image bytes"))
+	require.NoError(t, writeErr)
+	classifiedErr := newOpenAIUpstreamStreamReadError(errors.New("unexpected EOF"))
+	account := &Account{ID: 5401, Name: "openai-oauth", Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	resp := &http.Response{Header: http.Header{"X-Request-Id": []string{"req_after_write"}}}
+
+	err := (&OpenAIGatewayService{}).handleOpenAIImagesOAuthResponseError(context.Background(), c, account, "gpt-image-2", "", resp, before, classifiedErr)
+
+	var failoverErr *UpstreamFailoverError
+	require.False(t, errors.As(err, &failoverErr))
+	require.ErrorIs(t, err, classifiedErr)
+	rawEvents, ok := c.Get(OpsUpstreamErrorsKey)
+	require.True(t, ok)
+	events, ok := rawEvents.([]*OpsUpstreamErrorEvent)
+	require.True(t, ok)
+	require.Len(t, events, 1)
+	require.Equal(t, "retry_exhausted_failover", events[0].Kind)
+}
+
+func TestShouldClassifyOpenAIUpstreamStreamReadErrorTransportStrings(t *testing.T) {
+	for _, message := range []string{"unexpected EOF", "connection reset by peer", "broken pipe", "use of closed network connection"} {
+		t.Run(message, func(t *testing.T) {
+			require.True(t, shouldClassifyOpenAIUpstreamStreamReadError(errors.New(message)))
+		})
+	}
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.False(t, shouldClassifyOpenAIUpstreamStreamReadError(errors.New("unexpected EOF"), canceledCtx))
 }
 
 func TestOpenAIGatewayServiceForwardImages_OAuthStreamServerErrorAfterFlushDoesNotFailover(t *testing.T) {
