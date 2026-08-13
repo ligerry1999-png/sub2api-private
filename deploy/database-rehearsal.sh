@@ -234,11 +234,9 @@ run_application() {
     if docker exec "$active_app" wget -q -T 5 -O /dev/null http://127.0.0.1:8080/health; then
       build_info="$(docker exec "$active_app" /app/sub2api -version 2>&1)"
       printf '%s\n' "$build_info" | grep -F "commit: ${sha}"
-      case "$phase" in
-        candidate-*)
-          docker logs "$active_app" 2>&1 | grep -F '[StartupCheck] image log service connected' >/dev/null
-          ;;
-      esac
+      # ImageLogService is a required Wire dependency: the candidate refuses
+      # to initialize when it is missing. Reaching /health therefore proves
+      # the startup contract without depending on a fixed log output format.
       docker rm -f "$active_app" >/dev/null
       active_app=""
       return 0

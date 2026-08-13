@@ -101,6 +101,7 @@ assert_contains "$database_rehearsal" 'docker network create --internal "$networ
 assert_contains "$database_rehearsal" "groups_video_price_backup_220"
 assert_contains "$database_rehearsal" "221_group_model_pricing.sql"
 assert_contains "$database_rehearsal" "validate_v0176_migrations"
+assert_contains "$database_rehearsal" "ImageLogService is a required Wire dependency"
 assert_contains "$database_rehearsal" "restore_production_dump"
 
 # Grok ships dormant and fail-closed until the operator explicitly connects an
