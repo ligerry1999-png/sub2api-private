@@ -35,6 +35,9 @@ assert_contains "$workflow" "workflow_dispatch:"
 assert_contains "$workflow" "migration_rehearsal_sha:"
 assert_contains "$workflow" 'if: ${{ inputs.deploy == true }}'
 assert_contains "$workflow" 'test "$GITHUB_REF" = "refs/heads/main"'
+assert_contains "$workflow" "actions: read"
+assert_contains "$workflow" "Verify successful database rehearsal for exact commit"
+assert_contains "$workflow" "actions/workflows/database-rehearsal.yml/runs"
 assert_contains "$workflow" "pg_dump --format=custom"
 assert_contains "$workflow" "pg_restore --list"
 assert_contains "$workflow" "docker load -i /tmp/sub2api-image.tgz"
@@ -44,6 +47,10 @@ assert_contains "$workflow" 'grep -F "commit: ${RELEASE_SHA}"'
 assert_contains "$workflow" "printf '%s\\n' \"\$GITHUB_SHA\" > .release-commit"
 assert_contains "$workflow" 'org.opencontainers.image.revision'
 assert_contains "$workflow" 'probe_custom_route POST /v1/image-jobs/images/generations 401'
+assert_contains "$workflow" 'probe_custom_route POST /v1/responses 401'
+assert_contains "$workflow" 'probe_custom_route POST /v1/x_search 401'
+assert_contains "$workflow" 'probe_custom_route POST /v1/tts 401'
+assert_contains "$workflow" 'probe_custom_route POST /v1/videos 401'
 assert_not_contains "$workflow" "  push:"
 assert_not_contains "$workflow" "docker-compose.build.yml"
 assert_not_contains "$workflow" "docker compose build"
@@ -89,9 +96,12 @@ assert_contains "$compose" 'no-new-privileges:true'
 assert_contains "Dockerfile" 'LABEL org.opencontainers.image.revision="${COMMIT}"'
 test -f .github/workflows/database-rehearsal.yml || fail "database rehearsal workflow is missing"
 test -f "$database_rehearsal" || fail "database rehearsal script is missing"
-assert_contains ".github/workflows/database-rehearsal.yml" "upgrade/v0.1.173-private"
+assert_contains ".github/workflows/database-rehearsal.yml" "upgrade/v0.1.176-private"
 assert_contains "$database_rehearsal" 'docker network create --internal "$network"'
 assert_contains "$database_rehearsal" "groups_video_price_backup_220"
+assert_contains "$database_rehearsal" "221_group_model_pricing.sql"
+assert_contains "$database_rehearsal" "validate_v0176_migrations"
+assert_contains "$database_rehearsal" "ImageLogService is a required Wire dependency"
 assert_contains "$database_rehearsal" "restore_production_dump"
 
 # Grok ships dormant and fail-closed until the operator explicitly connects an
@@ -114,7 +124,7 @@ fi
 test "$actual_migration_sha" = "$expected_migration_sha" || \
   fail "backend/migrations/136_image_logs.sql checksum changed"
 
-test "$(tr -d '\r\n' < backend/cmd/server/VERSION)" = "0.1.173-private.1" || \
+test "$(tr -d '\r\n' < backend/cmd/server/VERSION)" = "0.1.176-private.1" || \
   fail "private version marker changed unexpectedly"
 
 printf 'private upgrade guards passed\n'

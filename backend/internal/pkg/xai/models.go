@@ -63,9 +63,9 @@ const (
 )
 
 // ModelMappingOptions controls optional expansions of the default mapping.
-// Cross-client wildcards (gpt-*/claude-*) default ON via settings
-// grok_cross_client_model_map_enabled so Codex/Claude clients keep working
-// against Grok groups (map to DefaultText / grok-4.5). Operators may disable.
+// Cross-client wildcards (gpt-*/claude-*) are a strict opt-in via settings
+// grok_cross_client_model_map_enabled. The private default is OFF so a GPT
+// request can never be silently rerouted to Grok.
 type ModelMappingOptions struct {
 	// DefaultText is the target for empty models and optional cross-client maps.
 	// Empty → DefaultTextModel (grok-4.5).
@@ -83,6 +83,7 @@ func (o ModelMappingOptions) defaultText() string {
 
 var defaultModels = []Model{
 	// Text
+	{ID: "grok-4.6", Object: "model", Type: "model", OwnedBy: "xai", DisplayName: "Grok 4.6"},
 	{ID: "grok-4.5", Object: "model", Type: "model", OwnedBy: "xai", DisplayName: "Grok 4.5"},
 	{ID: "grok-4.3", Object: "model", Type: "model", OwnedBy: "xai", DisplayName: "Grok 4.3"},
 	{ID: "grok-3-mini", Object: "model", Type: "model", OwnedBy: "xai", DisplayName: "Grok 3 Mini"},
@@ -106,6 +107,8 @@ var defaultModels = []Model{
 var grokTextResponsesModelAliases = map[string]string{
 	"grok":                         DefaultTextModel,
 	"grok-latest":                  DefaultTextModel,
+	"grok-4.6":                     "grok-4.6",
+	"grok-4.6-latest":              "grok-4.6",
 	"grok-4.5":                     DefaultTextModel,
 	"grok-4.5-latest":              DefaultTextModel,
 	"grok-4.3":                     "grok-4.3",

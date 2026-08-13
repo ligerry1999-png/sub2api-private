@@ -20,6 +20,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   deploy:
@@ -53,6 +54,24 @@ jobs:
             echo "migration_rehearsal_sha must equal the exact deployed commit: $GITHUB_SHA"
             exit 1
           }
+
+      - name: Verify successful database rehearsal for exact commit
+        if: ${{ inputs.deploy == true }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rehearsal_run_id="$(gh api --method GET \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/database-rehearsal.yml/runs" \
+            -f head_sha="$GITHUB_SHA" \
+            -f status=success \
+            -f per_page=1 \
+            --jq '.workflow_runs[0].id // empty')"
+          test -n "$rehearsal_run_id" || {
+            echo "No successful Database Rehearsal run exists for exact commit $GITHUB_SHA"
+            exit 1
+          }
+          echo "Verified Database Rehearsal run: $rehearsal_run_id"
 
       - name: Configure SSH
         if: ${{ inputs.deploy == true }}
@@ -381,6 +400,10 @@ jobs:
           probe_custom_route GET /v1/image-jobs/imgjob_probe 401
           probe_custom_route GET /v1/image-jobs/imgjob_probe/result 401
           probe_custom_route POST /v1/image-jobs/imgjob_probe/cancel 401
+          probe_custom_route POST /v1/responses 401 '{"model":"gpt-5.6-sol","input":"probe"}'
+          probe_custom_route POST /v1/x_search 401 '{"query":"probe"}'
+          probe_custom_route POST /v1/tts 401 '{"model":"grok-voice-latest","input":"probe"}'
+          probe_custom_route POST /v1/videos 401 '{"model":"grok-imagine-video","prompt":"probe"}'
 
           if command -v nginx >/dev/null 2>&1; then
             cp "$DEPLOY_DIR/nginx-sub2api-prod.conf" /etc/nginx/sites-available/sub2api

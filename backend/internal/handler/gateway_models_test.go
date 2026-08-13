@@ -24,6 +24,15 @@ type gatewayModelsResponseForTest struct {
 	Data   []gatewayModelItemForTest `json:"data"`
 }
 
+type gatewayCodexManifestForTest struct {
+	Models []struct {
+		Slug             string `json:"slug"`
+		DisplayName      string `json:"display_name"`
+		SupportedInAPI   bool   `json:"supported_in_api"`
+		UseResponsesLite bool   `json:"use_responses_lite"`
+	} `json:"models"`
+}
+
 type gatewayModelItemForTest struct {
 	ID                      string                                `json:"id"`
 	Object                  string                                `json:"object"`
@@ -383,6 +392,108 @@ func TestGatewayModels_CompositeUnmappedAccountsFallbackToLinkedPlatformsOnly(t 
 	require.Contains(t, ids, "grok-4.3")
 	require.NotContains(t, ids, "claude-sonnet-4-6")
 	require.NotContains(t, ids, "gemini-2.5-flash")
+}
+
+func TestGatewayCodexCompatibleModels_CompositeListsOnlyOpenAIAndGrokTextModels(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	groupID := int64(176)
+	h := newGatewayModelsHandlerForTest(
+		&gatewayModelsAccountRepoStub{
+			byGroup: map[int64][]service.Account{
+				groupID: {
+					{
+						ID:       1,
+						Platform: service.PlatformOpenAI,
+						Credentials: map[string]any{
+							"model_mapping": map[string]any{
+								"gpt-5.6-sol": "gpt-5.6-sol",
+								"gpt-image-2": "gpt-image-2",
+							},
+						},
+					},
+					{
+						ID:       2,
+						Platform: service.PlatformGrok,
+						Credentials: map[string]any{
+							"model_mapping": map[string]any{
+								"grok-4.6":           "grok-4.6",
+								"grok-imagine-image": "grok-imagine-image",
+							},
+						},
+					},
+				},
+			},
+		},
+	)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.176.0", nil)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		Group: &service.Group{ID: groupID, Platform: service.PlatformComposite},
+	})
+
+	h.CodexCompatibleModels(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got gatewayCodexManifestForTest
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Len(t, got.Models, 2)
+	require.Equal(t, "gpt-5.6-sol", got.Models[0].Slug)
+	require.Equal(t, "GPT-5.6 Sol", got.Models[0].DisplayName)
+	require.Equal(t, "grok-4.6", got.Models[1].Slug)
+	require.Equal(t, "Grok 4.6", got.Models[1].DisplayName)
+	for _, model := range got.Models {
+		require.True(t, model.SupportedInAPI)
+		require.False(t, model.UseResponsesLite)
+	}
+}
+
+func TestGatewayCodexCompatibleModels_GrokCustomListDoesNotExposeGPTAlias(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	groupID := int64(177)
+	h := newGatewayModelsHandlerForTest(
+		&gatewayModelsAccountRepoStub{
+			byGroup: map[int64][]service.Account{
+				groupID: {
+					{
+						ID:       2,
+						Platform: service.PlatformGrok,
+						Credentials: map[string]any{
+							"model_mapping": map[string]any{
+								"grok-4.6":    "grok-4.6",
+								"gpt-5.6-sol": "grok-4.6",
+							},
+						},
+					},
+				},
+			},
+		},
+	)
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models?client_version=0.176.0", nil)
+	c.Set(string(middleware2.ContextKeyAPIKey), &service.APIKey{
+		Group: &service.Group{
+			ID:       groupID,
+			Platform: service.PlatformGrok,
+			ModelsListConfig: service.GroupModelsListConfig{
+				Enabled: true,
+				Models:  []string{"grok-4.6", "gpt-5.6-sol"},
+			},
+		},
+	})
+
+	h.CodexCompatibleModels(c)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var got gatewayCodexManifestForTest
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	require.Len(t, got.Models, 1)
+	require.Equal(t, "grok-4.6", got.Models[0].Slug)
 }
 
 func TestGatewayModels_CustomModelsListKeepsConcreteModelAllowedByWildcardMapping(t *testing.T) {

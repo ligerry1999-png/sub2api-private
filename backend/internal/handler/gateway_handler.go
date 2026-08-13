@@ -1140,6 +1140,108 @@ func (h *GatewayHandler) Models(c *gin.Context) {
 	})
 }
 
+// CodexCompatibleModels serves the local Codex manifest shape for Grok and
+// composite groups. Unlike the OpenAI-only CodexModels handler, this does not
+// contact an upstream account: it converts the models already allowed by the
+// current Sub2API group into the {"models":[{"slug":...}]} envelope expected
+// by Codex desktop/CLI when client_version is present.
+func (h *GatewayHandler) CodexCompatibleModels(c *gin.Context) {
+	apiKey, _ := middleware2.GetAPIKeyFromContext(c)
+
+	var groupID *int64
+	var platform string
+	if apiKey != nil && apiKey.Group != nil {
+		groupID = &apiKey.Group.ID
+		platform = apiKey.Group.Platform
+	}
+	if forcedPlatform, ok := middleware2.GetForcePlatformFromContext(c); ok && strings.TrimSpace(forcedPlatform) != "" {
+		platform = forcedPlatform
+	}
+
+	var modelIDs []string
+	if platform == service.PlatformComposite {
+		modelIDs = h.compositeAvailableModels(c.Request.Context(), groupID)
+		if len(modelIDs) == 0 {
+			modelIDs = defaultModelIDsForPlatform(service.PlatformComposite)
+		}
+	} else {
+		modelIDs = h.gatewayService.GetAvailableModels(c.Request.Context(), groupID, platform)
+		if len(modelIDs) == 0 {
+			modelIDs = defaultModelIDsForPlatform(platform)
+		}
+	}
+
+	if apiKey != nil && apiKey.Group != nil && apiKey.Group.CustomModelsListEnabled() {
+		fallbackModels := defaultModelIDsForPlatform(platform)
+		modelIDs = filterModelsByCustomList(modelIDs, fallbackModels, apiKey.Group.ModelsListConfig.Models)
+	}
+
+	type codexModelEntry struct {
+		Slug             string `json:"slug"`
+		DisplayName      string `json:"display_name"`
+		SupportedInAPI   bool   `json:"supported_in_api"`
+		UseResponsesLite bool   `json:"use_responses_lite"`
+	}
+	models := make([]codexModelEntry, 0, len(modelIDs))
+	seen := make(map[string]struct{}, len(modelIDs))
+	for _, modelID := range modelIDs {
+		modelID = strings.TrimSpace(modelID)
+		if modelID == "" || !isCodexResponsesTextModel(platform, modelID) {
+			continue
+		}
+		if _, ok := seen[modelID]; ok {
+			continue
+		}
+		seen[modelID] = struct{}{}
+		models = append(models, codexModelEntry{
+			Slug:             modelID,
+			DisplayName:      codexModelDisplayName(modelID),
+			SupportedInAPI:   true,
+			UseResponsesLite: false,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"models": models})
+}
+
+func isCodexResponsesTextModel(groupPlatform, modelID string) bool {
+	modelPlatform, ok := service.DetectModelPlatform(modelID)
+	if !ok {
+		return false
+	}
+	if groupPlatform != service.PlatformComposite && groupPlatform != modelPlatform {
+		return false
+	}
+	switch modelPlatform {
+	case service.PlatformOpenAI:
+		normalized := strings.ToLower(strings.TrimSpace(modelID))
+		return strings.HasPrefix(normalized, "gpt-") && !strings.HasPrefix(normalized, "gpt-image-") ||
+			strings.HasPrefix(normalized, "codex-") ||
+			normalized == "o1" || strings.HasPrefix(normalized, "o1-") ||
+			normalized == "o3" || strings.HasPrefix(normalized, "o3-") ||
+			normalized == "o4" || strings.HasPrefix(normalized, "o4-") ||
+			normalized == "o5" || strings.HasPrefix(normalized, "o5-")
+	case service.PlatformGrok:
+		return xai.IsGrokTextResponsesModelID(modelID)
+	default:
+		return false
+	}
+}
+
+func codexModelDisplayName(modelID string) string {
+	for _, model := range openai.DefaultModels {
+		if model.ID == modelID && strings.TrimSpace(model.DisplayName) != "" {
+			return model.DisplayName
+		}
+	}
+	for _, model := range xai.DefaultModels() {
+		if model.ID == modelID && strings.TrimSpace(model.DisplayName) != "" {
+			return model.DisplayName
+		}
+	}
+	return modelID
+}
+
 func (h *GatewayHandler) compositeAvailableModels(ctx context.Context, groupID *int64) []string {
 	if h == nil || h.gatewayService == nil {
 		return nil
@@ -1249,7 +1351,7 @@ func writeGrokModelsList(c *gin.Context, modelIDs []string) {
 
 func grokModelSupportsConfigurableReasoning(modelID string) bool {
 	switch strings.ToLower(strings.TrimSpace(modelID)) {
-	case "grok-4.5", "grok-4.5-latest", "grok", "grok-latest", "grok-build", "grok-build-latest", "grok-build-0.1":
+	case "grok-4.6", "grok-4.6-latest", "grok-4.5", "grok-4.5-latest", "grok", "grok-latest", "grok-build", "grok-build-latest", "grok-build-0.1":
 		return true
 	default:
 		return false
