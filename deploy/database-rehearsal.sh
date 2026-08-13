@@ -25,6 +25,7 @@ candidate_image="sub2api:rehearsal-${CANDIDATE_SHA}"
 previous_image="sub2api:rehearsal-${PREVIOUS_SHA}"
 database_password="rehearsal-only-password"
 active_app=""
+migration_220_preexisting=false
 
 cleanup() {
   if test -n "$active_app"; then
@@ -59,6 +60,24 @@ wait_for_postgres() {
   done
   printf 'isolated PostgreSQL did not become ready\n' >&2
   return 1
+}
+
+assert_equal() {
+  label="$1"
+  expected="$2"
+  actual="$3"
+  if test "$actual" != "$expected"; then
+    printf '%s mismatch: expected=%s actual=%s\n' "$label" "$expected" "$actual" >&2
+    return 1
+  fi
+}
+
+assert_query_equal() {
+  label="$1"
+  expected="$2"
+  query="$3"
+  actual="$(docker exec "$postgres" psql -U sub2api -d sub2api -v ON_ERROR_STOP=1 -Atqc "$query")"
+  assert_equal "$label" "$expected" "$actual"
 }
 
 database_snapshot() {
@@ -117,10 +136,22 @@ video_price_snapshot() {
     "SELECT COALESCE(jsonb_agg(jsonb_build_array(${id_column}, platform, video_price_480p, video_price_720p, video_price_1080p, ${model_prices_expression}) ORDER BY ${id_column})::text, '[]') FROM ${table_name} WHERE ${platform_predicate} AND (video_price_480p IS NOT NULL OR video_price_720p IS NOT NULL OR video_price_1080p IS NOT NULL OR ${model_prices_expression} IS NOT NULL);"
 }
 
-seed_video_price_rehearsal_canary() {
-  # Production currently has no Grok group. Make migration 220 prove its backup
-  # and clearing behavior against one isolated non-Grok row even when every
-  # real legacy video price is NULL. This changes only the temporary copy.
+prepare_migration_220_rehearsal() {
+  # A production dump from v0.1.173 has already applied migration 220. In that
+  # case preserve and compare its existing backup table instead of inserting a
+  # canary that the already-recorded migration can never see. Older dumps still
+  # exercise the original backup-and-clear path with an isolated canary.
+  if test "$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
+    "SELECT COUNT(*) FROM schema_migrations WHERE filename = '220_clear_non_grok_video_generation_config.sql';")" -eq 1; then
+    migration_220_preexisting=true
+    assert_query_equal "preexisting migration 220 backup table" t \
+      "SELECT to_regclass('public.groups_video_price_backup_220') IS NOT NULL;"
+    return 0
+  fi
+
+  migration_220_preexisting=false
+  docker exec "$postgres" psql -U sub2api -d sub2api -v ON_ERROR_STOP=1 -Atqc \
+    "DROP TABLE IF EXISTS groups_video_price_backup_220;"
   docker exec "$postgres" psql -U sub2api -d sub2api -v ON_ERROR_STOP=1 -Atqc \
     "UPDATE groups
        SET video_price_480p = 0.987654
@@ -176,14 +207,16 @@ validate_v0176_migrations() {
       '220_clear_non_grok_video_generation_config.sql',
       '221_group_model_pricing.sql'
     );")"
-  test "$expected_migrations" -eq 22
-  docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
-    "SELECT to_regclass('public.groups_video_price_backup_220') IS NOT NULL;" | grep -qx t
-  test "$(video_price_snapshot non-grok groups_video_price_backup_220 group_id)" = "$before_non_grok_video_prices"
-  test "$(video_price_snapshot grok groups id)" = "$before_grok_video_prices"
-  test "$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
-    "SELECT COUNT(*) FROM groups WHERE platform IS DISTINCT FROM 'grok' AND platform IS DISTINCT FROM 'composite' AND (video_price_480p IS NOT NULL OR video_price_720p IS NOT NULL OR video_price_1080p IS NOT NULL OR video_model_prices IS NOT NULL);")" -eq 0
-  docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
+  assert_equal "v0.1.176 migration count" 22 "$expected_migrations"
+  assert_query_equal "migration 220 backup table" t \
+    "SELECT to_regclass('public.groups_video_price_backup_220') IS NOT NULL;"
+  assert_equal "migration 220 non-Grok backup" "$before_non_grok_video_prices" \
+    "$(video_price_snapshot non-grok groups_video_price_backup_220 group_id)"
+  assert_equal "migration 220 Grok price preservation" "$before_grok_video_prices" \
+    "$(video_price_snapshot grok groups id)"
+  assert_query_equal "migration 220 non-Grok price clearing" 0 \
+    "SELECT COUNT(*) FROM groups WHERE platform IS DISTINCT FROM 'grok' AND platform IS DISTINCT FROM 'composite' AND (video_price_480p IS NOT NULL OR video_price_720p IS NOT NULL OR video_price_1080p IS NOT NULL OR video_model_prices IS NOT NULL);"
+  assert_query_equal "migration 221 group pricing columns" t \
     "SELECT COUNT(*) = 2
        AND bool_and(
          CASE
@@ -197,11 +230,11 @@ validate_v0176_migrations() {
      FROM information_schema.columns
      WHERE table_schema = 'public'
        AND table_name = 'groups'
-       AND column_name IN ('long_context_pricing_enabled', 'model_pricing');" | grep -qx t
-  test "$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
-    "SELECT COUNT(*) FROM groups WHERE long_context_pricing_enabled IS DISTINCT FROM TRUE;")" -eq 0
-  test "$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
-    "SELECT COUNT(*) FROM groups WHERE model_pricing IS NOT NULL;")" -eq 0
+       AND column_name IN ('long_context_pricing_enabled', 'model_pricing');"
+  assert_query_equal "migration 221 long-context backfill" 0 \
+    "SELECT COUNT(*) FROM groups WHERE long_context_pricing_enabled IS DISTINCT FROM TRUE;"
+  assert_query_equal "migration 221 model pricing initialization" 0 \
+    "SELECT COUNT(*) FROM groups WHERE model_pricing IS NOT NULL;"
 }
 
 run_application() {
@@ -265,22 +298,26 @@ docker run -d --name "$redis" --network "$network" redis:8-alpine >/dev/null
 wait_for_postgres
 
 restore_production_dump
-seed_video_price_rehearsal_canary
+prepare_migration_220_rehearsal
 
 before_snapshot="$(database_snapshot)"
 before_private_config_snapshot="$(private_config_snapshot)"
 before_migrations="$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc 'SELECT COUNT(*) FROM schema_migrations;')"
-before_non_grok_video_prices="$(video_price_snapshot non-grok groups id "NULL::jsonb")"
+if test "$migration_220_preexisting" = true; then
+  before_non_grok_video_prices="$(video_price_snapshot non-grok groups_video_price_backup_220 group_id)"
+else
+  before_non_grok_video_prices="$(video_price_snapshot non-grok groups id "NULL::jsonb")"
+fi
 before_grok_video_prices="$(video_price_snapshot grok groups id "NULL::jsonb")"
 
 run_application "$candidate_image" "$CANDIDATE_SHA" candidate-first
 after_upgrade_snapshot="$(database_snapshot)"
-test "$after_upgrade_snapshot" = "$before_snapshot"
-test "$(private_config_snapshot)" = "$before_private_config_snapshot"
-docker exec "$postgres" psql -U sub2api -d sub2api -v ON_ERROR_STOP=1 -Atqc \
-  "SELECT 1 FROM schema_migrations WHERE filename = '191_passkey_credentials.sql';" | grep -qx 1
-docker exec "$postgres" psql -U sub2api -d sub2api -v ON_ERROR_STOP=1 -Atqc \
-  "SELECT to_regclass('public.passkey_user_handles') IS NOT NULL AND to_regclass('public.passkey_credentials') IS NOT NULL;" | grep -qx t
+assert_equal "candidate-first row snapshot" "$before_snapshot" "$after_upgrade_snapshot"
+assert_equal "candidate-first private config digest" "$before_private_config_snapshot" "$(private_config_snapshot)"
+assert_query_equal "migration 191 record" 1 \
+  "SELECT COUNT(*) FROM schema_migrations WHERE filename = '191_passkey_credentials.sql';"
+assert_query_equal "migration 191 passkey tables" t \
+  "SELECT to_regclass('public.passkey_user_handles') IS NOT NULL AND to_regclass('public.passkey_credentials') IS NOT NULL;"
 validate_v0176_migrations
 
 after_migrations="$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc 'SELECT COUNT(*) FROM schema_migrations;')"
@@ -297,7 +334,7 @@ test "$(private_config_snapshot)" = "$before_private_config_snapshot"
 # A real database rollback means restoring the pre-upgrade dump, not only
 # proving that the old binary can tolerate the forward-migrated schema.
 restore_production_dump
-seed_video_price_rehearsal_canary
+prepare_migration_220_rehearsal
 test "$(database_snapshot)" = "$before_snapshot"
 test "$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc 'SELECT COUNT(*) FROM schema_migrations;')" -eq "$before_migrations"
 test "$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
