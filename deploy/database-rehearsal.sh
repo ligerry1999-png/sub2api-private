@@ -26,6 +26,7 @@ previous_image="sub2api:rehearsal-${PREVIOUS_SHA}"
 database_password="rehearsal-only-password"
 active_app=""
 migration_220_preexisting=false
+migration_221_preexisting=false
 
 cleanup() {
   if test -n "$active_app"; then
@@ -134,6 +135,11 @@ video_price_snapshot() {
   esac
   docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
     "SELECT COALESCE(jsonb_agg(jsonb_build_array(${id_column}, platform, video_price_480p, video_price_720p, video_price_1080p, ${model_prices_expression}) ORDER BY ${id_column})::text, '[]') FROM ${table_name} WHERE ${platform_predicate} AND (video_price_480p IS NOT NULL OR video_price_720p IS NOT NULL OR video_price_1080p IS NOT NULL OR ${model_prices_expression} IS NOT NULL);"
+}
+
+group_pricing_snapshot() {
+  docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
+    "SELECT COALESCE(jsonb_agg(jsonb_build_array(id, long_context_pricing_enabled, model_pricing) ORDER BY id)::text, '[]') FROM groups;"
 }
 
 prepare_migration_220_rehearsal() {
@@ -251,10 +257,15 @@ validate_v0183_migrations() {
      WHERE table_schema = 'public'
        AND table_name = 'groups'
        AND column_name IN ('long_context_pricing_enabled', 'model_pricing');"
-  assert_query_equal "migration 221 long-context backfill" 0 \
-    "SELECT COUNT(*) FROM groups WHERE long_context_pricing_enabled IS DISTINCT FROM TRUE;"
-  assert_query_equal "migration 221 model pricing initialization" 0 \
-    "SELECT COUNT(*) FROM groups WHERE model_pricing IS NOT NULL;"
+  if test "$migration_221_preexisting" = true; then
+    assert_equal "migration 221 existing pricing preservation" "$before_group_pricing" \
+      "$(group_pricing_snapshot)"
+  else
+    assert_query_equal "migration 221 long-context backfill" 0 \
+      "SELECT COUNT(*) FROM groups WHERE long_context_pricing_enabled IS DISTINCT FROM TRUE;"
+    assert_query_equal "migration 221 model pricing initialization" 0 \
+      "SELECT COUNT(*) FROM groups WHERE model_pricing IS NOT NULL;"
+  fi
   assert_query_equal "migrations 222-223 group usage rollups" t \
     "SELECT to_regclass('public.usage_group_daily_rollups') IS NOT NULL
        AND to_regclass('public.usage_group_rollup_state') IS NOT NULL
@@ -377,6 +388,11 @@ wait_for_postgres
 
 restore_production_dump
 prepare_migration_220_rehearsal
+migration_221_preexisting=false
+if test "$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
+  "SELECT COUNT(*) FROM schema_migrations WHERE filename = '221_group_model_pricing.sql';")" -eq 1; then
+  migration_221_preexisting=true
+fi
 
 before_snapshot="$(database_snapshot)"
 before_private_config_snapshot="$(private_config_snapshot)"
@@ -387,6 +403,11 @@ if test "$migration_220_preexisting" = true; then
 else
   before_non_grok_video_prices="$(video_price_snapshot non-grok groups id "NULL::jsonb")"
   before_current_non_grok_video_prices='[]'
+fi
+if test "$migration_221_preexisting" = true; then
+  before_group_pricing="$(group_pricing_snapshot)"
+else
+  before_group_pricing='[]'
 fi
 before_grok_video_prices="$(video_price_snapshot grok groups id "NULL::jsonb")"
 
