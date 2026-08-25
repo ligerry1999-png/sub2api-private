@@ -225,8 +225,17 @@ validate_v0183_migrations() {
     "$(video_price_snapshot non-grok groups_video_price_backup_220 group_id)"
   assert_equal "migration 220 Grok price preservation" "$before_grok_video_prices" \
     "$(video_price_snapshot grok groups id)"
-  assert_query_equal "migration 220 non-Grok price clearing" 0 \
-    "SELECT COUNT(*) FROM groups WHERE platform IS DISTINCT FROM 'grok' AND platform IS DISTINCT FROM 'composite' AND (video_price_480p IS NOT NULL OR video_price_720p IS NOT NULL OR video_price_1080p IS NOT NULL OR video_model_prices IS NOT NULL);"
+  if test "$migration_220_preexisting" = true; then
+    # The production database may have received legitimate non-Grok pricing
+    # after migration 220 was applied. In that case verify this rehearsal did
+    # not rewrite it; only a newly applied migration must clear those values.
+    assert_equal "migration 220 existing non-Grok price preservation" \
+      "$before_current_non_grok_video_prices" \
+      "$(video_price_snapshot non-grok groups id)"
+  else
+    assert_query_equal "migration 220 non-Grok price clearing" 0 \
+      "SELECT COUNT(*) FROM groups WHERE platform IS DISTINCT FROM 'grok' AND platform IS DISTINCT FROM 'composite' AND (video_price_480p IS NOT NULL OR video_price_720p IS NOT NULL OR video_price_1080p IS NOT NULL OR video_model_prices IS NOT NULL);"
+  fi
   assert_query_equal "migration 221 group pricing columns" t \
     "SELECT COUNT(*) = 2
        AND bool_and(
@@ -374,8 +383,10 @@ before_private_config_snapshot="$(private_config_snapshot)"
 before_migrations="$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc 'SELECT COUNT(*) FROM schema_migrations;')"
 if test "$migration_220_preexisting" = true; then
   before_non_grok_video_prices="$(video_price_snapshot non-grok groups_video_price_backup_220 group_id)"
+  before_current_non_grok_video_prices="$(video_price_snapshot non-grok groups id)"
 else
   before_non_grok_video_prices="$(video_price_snapshot non-grok groups id "NULL::jsonb")"
+  before_current_non_grok_video_prices='[]'
 fi
 before_grok_video_prices="$(video_price_snapshot grok groups id "NULL::jsonb")"
 
