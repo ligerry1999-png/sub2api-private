@@ -6,6 +6,7 @@
 
 - [x] 将本地候选快进推送到 GitHub `main`
 - [x] 修复 GitHub Security Scan 报出的 `golang.org/x/image` WebP 解码漏洞并同步升级护栏
+- [ ] 修复数据库演练中后台聚合清理造成的快照误报并重新推送
 - [ ] 并行完成修复后提交的 CI、安全扫描和精确提交的数据库隔离演练
 - [ ] 确认服务器没有执行 `docker build`、`go build` 或前端构建
 - [ ] 仅触发一次 `Deploy Server / deploy=true`，由 GitHub 构建镜像
@@ -14,7 +15,8 @@
 
 ## 发布 Review
 
-- 首次 GitHub 门禁发现 `golang.org/x/image v0.43.0` 的 WebP 解码漏洞 `GO-2026-6222`，已停止继续部署；修复提交待推送并重新验证。
+- 首次 GitHub 门禁发现 `golang.org/x/image v0.43.0` 的 WebP 解码漏洞 `GO-2026-6222`，已停止继续部署；已修复并通过安全扫描。
+- 数据库演练首次失败是后台聚合默认清理了备份中两条过期 `usage_logs`，并非迁移破坏数据；已让隔离演练关闭后台聚合/清理，再重新验证。
 
 ---
 

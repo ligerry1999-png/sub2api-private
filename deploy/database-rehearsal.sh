@@ -295,6 +295,8 @@ run_application() {
     -e SERVER_PORT=8080 \
     -e SERVER_MODE=release \
     -e RUN_MODE=simple \
+    -e DASHBOARD_AGGREGATION_ENABLED=false \
+    -e USAGE_CLEANUP_ENABLED=false \
     -e DATABASE_HOST="$postgres" \
     -e DATABASE_PORT=5432 \
     -e DATABASE_USER=sub2api \
