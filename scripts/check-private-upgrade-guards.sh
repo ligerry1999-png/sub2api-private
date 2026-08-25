@@ -113,8 +113,8 @@ assert_contains "$setting_parse" 'strings.EqualFold('
 assert_contains "$grok_oauth" "func (s *GrokOAuthService) passwordAuthEnabled() bool {"
 assert_contains "$grok_oauth" "return false"
 
-assert_contains "backend/go.mod" "golang.org/x/image v0.43.0"
-assert_contains "backend/go.mod" "golang.org/x/text v0.39.0"
+assert_contains "backend/go.mod" "golang.org/x/image v0.45.0"
+assert_contains "backend/go.mod" "golang.org/x/text v0.41.0"
 
 expected_migration_sha="b98780ae77a0f90efeda8be70645cb3997112f7bc3a9e1938a16fdd7810d902a"
 if command -v sha256sum >/dev/null 2>&1; then

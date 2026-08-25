@@ -4,8 +4,9 @@
 >
 > 额度策略：本地候选已完成全量单元测试和前后端构建，因此将同一候选提交快进到 `main`，只触发一轮 CI、安全扫描和数据库演练；不额外运行会重复构建的 `deploy=false`。
 
-- [ ] 将本地候选快进推送到 GitHub `main`
-- [ ] 并行完成 CI、安全扫描和精确提交的数据库隔离演练
+- [x] 将本地候选快进推送到 GitHub `main`
+- [x] 修复 GitHub Security Scan 报出的 `golang.org/x/image` WebP 解码漏洞并同步升级护栏
+- [ ] 并行完成修复后提交的 CI、安全扫描和精确提交的数据库隔离演练
 - [ ] 确认服务器没有执行 `docker build`、`go build` 或前端构建
 - [ ] 仅触发一次 `Deploy Server / deploy=true`，由 GitHub 构建镜像
 - [ ] 核对线上提交、版本、健康状态、容器重启次数和私有路由
@@ -13,7 +14,7 @@
 
 ## 发布 Review
 
-- 待 GitHub 发布完成后填写。
+- 首次 GitHub 门禁发现 `golang.org/x/image v0.43.0` 的 WebP 解码漏洞 `GO-2026-6222`，已停止继续部署；修复提交待推送并重新验证。
 
 ---
 
