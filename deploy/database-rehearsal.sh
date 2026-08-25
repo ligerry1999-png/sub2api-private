@@ -181,7 +181,7 @@ restore_production_dump() {
     -d postgres < "$PRODUCTION_DUMP"
 }
 
-validate_v0176_migrations() {
+validate_v0183_migrations() {
   expected_migrations="$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
     "SELECT COUNT(*) FROM schema_migrations WHERE filename IN (
       '192_group_profit_control.sql',
@@ -205,9 +205,20 @@ validate_v0176_migrations() {
       '218_group_audio_voice_pricing.sql',
       '219_group_search_price_per_1k.sql',
       '220_clear_non_grok_video_generation_config.sql',
-      '221_group_model_pricing.sql'
+      '221_group_model_pricing.sql',
+      '222_group_usage_daily_rollups.sql',
+      '223_group_usage_rollup_timezone.sql',
+      '224_user_platform_quotas_add_cn_providers.sql',
+      '225_backfill_codex_fingerprint_seed.sql',
+      '225_channel_model_time_pricing.sql',
+      '226_add_usage_log_effective_model_indexes_notx.sql',
+      '226_channel_monitor_quota_mode.sql',
+      '227_composite_routes_add_cn_providers.sql',
+      '228_channel_pricing_multipliers.sql',
+      '229_plugins.sql',
+      '230_plugin_artifacts.sql'
     );")"
-  assert_equal "v0.1.176 migration count" 22 "$expected_migrations"
+  assert_equal "v0.1.183 migration count" 33 "$expected_migrations"
   assert_query_equal "migration 220 backup table" t \
     "SELECT to_regclass('public.groups_video_price_backup_220') IS NOT NULL;"
   assert_equal "migration 220 non-Grok backup" "$before_non_grok_video_prices" \
@@ -235,6 +246,39 @@ validate_v0176_migrations() {
     "SELECT COUNT(*) FROM groups WHERE long_context_pricing_enabled IS DISTINCT FROM TRUE;"
   assert_query_equal "migration 221 model pricing initialization" 0 \
     "SELECT COUNT(*) FROM groups WHERE model_pricing IS NOT NULL;"
+  assert_query_equal "migrations 222-223 group usage rollups" t \
+    "SELECT to_regclass('public.usage_group_daily_rollups') IS NOT NULL
+       AND to_regclass('public.usage_group_rollup_state') IS NOT NULL
+       AND EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'usage_group_rollup_state'
+           AND column_name = 'timezone_name'
+       );"
+  assert_query_equal "migration 225 channel time pricing" 1 \
+    "SELECT COUNT(*) FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'channel_model_pricing'
+       AND column_name = 'time_pricing';"
+  assert_query_equal "migration 226 channel monitor quota mode" 3 \
+    "SELECT COUNT(*) FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND ((table_name = 'channel_monitors' AND column_name IN ('check_mode', 'account_id'))
+         OR (table_name = 'channel_monitor_histories' AND column_name = 'quota'));"
+  assert_query_equal "migration 228 pricing multipliers" 6 \
+    "SELECT COUNT(*) FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND ((table_name = 'channel_model_pricing' AND column_name IN ('fast_multiplier', 'flex_multiplier'))
+         OR (table_name = 'channel_pricing_intervals' AND column_name IN ('input_multiplier', 'output_multiplier', 'cache_write_multiplier', 'cache_read_multiplier')));"
+  assert_query_equal "migrations 229-230 plugin storage" t \
+    "SELECT to_regclass('public.sub2api_plugin_installations') IS NOT NULL
+       AND to_regclass('public.sub2api_plugin_bindings') IS NOT NULL
+       AND EXISTS (
+         SELECT 1 FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'sub2api_plugin_installations'
+           AND column_name = 'artifact_data'
+       );"
 }
 
 run_application() {
@@ -318,7 +362,7 @@ assert_query_equal "migration 191 record" 1 \
   "SELECT COUNT(*) FROM schema_migrations WHERE filename = '191_passkey_credentials.sql';"
 assert_query_equal "migration 191 passkey tables" t \
   "SELECT to_regclass('public.passkey_user_handles') IS NOT NULL AND to_regclass('public.passkey_credentials') IS NOT NULL;"
-validate_v0176_migrations
+validate_v0183_migrations
 
 after_migrations="$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc 'SELECT COUNT(*) FROM schema_migrations;')"
 if git -C "$CANDIDATE_DIR" diff --quiet "$PREVIOUS_SHA" "$CANDIDATE_SHA" -- backend/migrations; then
@@ -339,6 +383,8 @@ test "$(database_snapshot)" = "$before_snapshot"
 test "$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc 'SELECT COUNT(*) FROM schema_migrations;')" -eq "$before_migrations"
 test "$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
   "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'groups' AND column_name IN ('long_context_pricing_enabled', 'model_pricing');")" -eq 0
+test "$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
+  "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('usage_group_daily_rollups', 'usage_group_rollup_state', 'sub2api_plugin_installations', 'sub2api_plugin_bindings');")" -eq 0
 test "$(private_config_snapshot)" = "$before_private_config_snapshot"
 run_application "$previous_image" "$PREVIOUS_SHA" previous-restored
 test "$(database_snapshot)" = "$before_snapshot"
@@ -347,7 +393,7 @@ test "$(private_config_snapshot)" = "$before_private_config_snapshot"
 run_application "$candidate_image" "$CANDIDATE_SHA" candidate-second
 test "$(database_snapshot)" = "$before_snapshot"
 test "$(private_config_snapshot)" = "$before_private_config_snapshot"
-validate_v0176_migrations
+validate_v0183_migrations
 test "$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc 'SELECT COUNT(*) FROM pg_index WHERE NOT indisvalid;')" = 0
 
 printf 'database rehearsal passed: previous=%s candidate=%s rows=%s migrations=%s->%s\n' \

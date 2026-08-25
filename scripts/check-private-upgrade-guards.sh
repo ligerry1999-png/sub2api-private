@@ -96,11 +96,12 @@ assert_contains "$compose" 'no-new-privileges:true'
 assert_contains "Dockerfile" 'LABEL org.opencontainers.image.revision="${COMMIT}"'
 test -f .github/workflows/database-rehearsal.yml || fail "database rehearsal workflow is missing"
 test -f "$database_rehearsal" || fail "database rehearsal script is missing"
-assert_contains ".github/workflows/database-rehearsal.yml" "upgrade/v0.1.176-private"
+assert_contains ".github/workflows/database-rehearsal.yml" "upgrade/v0.1.183-private"
 assert_contains "$database_rehearsal" 'docker network create --internal "$network"'
 assert_contains "$database_rehearsal" "groups_video_price_backup_220"
 assert_contains "$database_rehearsal" "221_group_model_pricing.sql"
-assert_contains "$database_rehearsal" "validate_v0176_migrations"
+assert_contains "$database_rehearsal" "230_plugin_artifacts.sql"
+assert_contains "$database_rehearsal" "validate_v0183_migrations"
 assert_contains "$database_rehearsal" "ImageLogService is a required Wire dependency"
 assert_contains "$database_rehearsal" "restore_production_dump"
 
@@ -124,7 +125,7 @@ fi
 test "$actual_migration_sha" = "$expected_migration_sha" || \
   fail "backend/migrations/136_image_logs.sql checksum changed"
 
-test "$(tr -d '\r\n' < backend/cmd/server/VERSION)" = "0.1.176-private.1" || \
+test "$(tr -d '\r\n' < backend/cmd/server/VERSION)" = "0.1.183-private.1" || \
   fail "private version marker changed unexpectedly"
 
 printf 'private upgrade guards passed\n'

@@ -2,7 +2,7 @@
 
 > 开始日期：2026-08-25
 >
-> 当前私有基线：`0.1.176-private.1` / `fd6d81557c61f97d8a1151cf8c3f7bdd87a47552`
+> 当前私有基线：`0.1.176-private.1` / `fd6d81557c064e4d79d800e78b3356d7649c6e45`
 >
 > 目标：升级到官方稳定版 `v0.1.183`，接收 Codex 指纹默认关闭、出站身份统一、回合状态、额度探针和 429 额度耗尽调度修复，同时完整保留私有持久生图队列、图片日志和部署保护。
 
@@ -12,34 +12,38 @@
 - [x] 同步官方 tags，确认 `v0.1.183` 是最新稳定版
 - [x] 记录官方 802 个变更文件、私有 150 个变更文件及 58 个重叠文件
 - [x] 确认指纹主动开启、Codex 身份统一、turn-state、session-id 和额度耗尽 429 修复均已进入稳定版
-- [ ] 审核迁移 222-230、Go 1.27 和 OAuth 出站插件系统的部署影响
+- [x] 审核迁移 222-230、Go 1.27 和 OAuth 出站插件系统的部署影响
 
 ## 私有功能护栏
 
-- [ ] 保留 `/v1/image-jobs/*` 持久队列、取消、重试、重启恢复及 440 条假上游验收
-- [ ] 保留 `image_logs`、缩略图、七天清理、启动注入自检和 Base64/`file_url` 兼容
-- [ ] 保留 ChatGPT2API worker/fallback、Codex Responses、Team/Workspace、审核和管理员权限
-- [ ] 保留 GitHub Actions 构建、服务器 `--no-build`、数据库备份/失败回滚和 Nginx 大图配置
-- [ ] 保持 Grok 与 OpenAI 图片链路分离，跨厂商模型映射严格默认关闭
+- [x] 保留 `/v1/image-jobs/*` 持久队列、取消、重试、重启恢复及 440 条假上游验收
+- [x] 保留 `image_logs`、缩略图、七天清理、启动注入自检和 Base64/`file_url` 兼容
+- [x] 保留 ChatGPT2API worker/fallback、Codex Responses、Team/Workspace、审核和管理员权限
+- [x] 保留 GitHub Actions 构建、服务器 `--no-build`、数据库备份/失败回滚和 Nginx 大图配置
+- [x] 保持 Grok 与 OpenAI 图片链路分离，跨厂商模型映射严格默认关闭
 
 ## 合并与验证
 
-- [ ] 合并官方 `v0.1.183`，所有冲突和语义重叠人工取行为并集
-- [ ] 更新私有版本号与升级保护脚本，重新生成必要代码
-- [ ] 运行 Codex 指纹默认关闭、身份、turn-state、session-id、额度探针和 429 调度定向测试
-- [ ] 运行私有路由、队列、日志、Base64/`file_url`、取消/重试/恢复定向测试
-- [ ] 运行 `git diff --check`、私有升级护栏、Go 完整测试和前端 lint/typecheck/test/build
-- [ ] 使用假上游完成 440 条队列验收，禁止产生真实生图费用
-- [ ] 记录未在本地执行的数据库隔离演练、GitHub CI 和生产核验项
+- [x] 合并官方 `v0.1.183`，所有冲突和语义重叠人工取行为并集
+- [x] 更新私有版本号与升级保护脚本，重新生成必要代码
+- [x] 运行 Codex 指纹默认关闭、身份、turn-state、session-id、额度探针和 429 调度定向测试
+- [x] 运行私有路由、队列、日志、Base64/`file_url`、取消/重试/恢复定向测试
+- [x] 运行 `git diff --check`、私有升级护栏、Go unit 全量测试和前端 lint/typecheck/test/build
+- [x] 使用假上游完成 440 条队列验收，禁止产生真实生图费用
+- [x] 记录本机 Docker 未启动而未完成的 integration、数据库隔离演练、GitHub CI 和生产核验项
 
 ## 发布边界
 
-- [ ] 不推送、不合并回 `main`、不部署生产，等待人工确认候选结果
-- [ ] 正式发布时仅通过 GitHub Actions 部署，服务器不拉源码、不构建
+- [x] 不推送、不合并回 `main`、不部署生产，等待人工确认候选结果
+- [x] 正式发布时仅通过 GitHub Actions 部署，服务器不拉源码、不构建
 
 ## Review
 
-- 待本地候选验证完成后填写。
+- 候选版已完整合并官方 `v0.1.183`，12 处硬冲突均按官方新能力与私有功能的行为并集解决；版本更新为 `0.1.183-private.1`。
+- Codex 指纹收敛保持默认关闭，同时接收出站身份统一、turn-state、session-id、额度探针和 429 额度耗尽暂停/调度修复。
+- 私有持久生图队列、图片日志、Base64/`file_url`、取消/重试/重启恢复、ChatGPT2API fallback 和部署保护均已保留。
+- 本地 Go unit 全量测试通过；前端 244 个测试文件、1751 条测试全部通过；前后端正式构建、私有升级保护及 440 条无网络入队测试通过。
+- 本机 Docker Desktop 未启动，因此 integration 中需要 Redis/PostgreSQL 容器的测试和数据库隔离演练待 GitHub CI 执行；候选分支未推送、未合并 `main`、未部署生产。
 
 ---
 
