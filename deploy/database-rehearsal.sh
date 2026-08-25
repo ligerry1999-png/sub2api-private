@@ -325,6 +325,12 @@ run_application() {
     fi
     sleep 2
   done
+  return 1
+}
+
+report_application_failure() {
+  image="$1"
+  phase="$2"
   printf 'application health check failed: phase=%s image=%s\n' "$phase" "$image" >&2
   docker inspect --format \
     'container={{.Name}} running={{.State.Running}} status={{.State.Status}} exit_code={{.State.ExitCode}} error={{printf "%q" .State.Error}} started={{.State.StartedAt}} finished={{.State.FinishedAt}}' \
@@ -333,6 +339,16 @@ run_application() {
     "$active_app" >&2 || true
   docker ps -a --filter "name=$active_app" --no-trunc >&2 || true
   docker logs --timestamps "$active_app" >&2 || true
+}
+
+run_application_checked() {
+  image="$1"
+  sha="$2"
+  phase="$3"
+  if run_application "$image" "$sha" "$phase"; then
+    return 0
+  fi
+  report_application_failure "$image" "$phase"
   return 1
 }
 
@@ -363,7 +379,7 @@ else
 fi
 before_grok_video_prices="$(video_price_snapshot grok groups id "NULL::jsonb")"
 
-run_application "$candidate_image" "$CANDIDATE_SHA" candidate-first
+run_application_checked "$candidate_image" "$CANDIDATE_SHA" candidate-first
 after_upgrade_snapshot="$(database_snapshot)"
 assert_equal "candidate-first row snapshot" "$before_snapshot" "$after_upgrade_snapshot"
 assert_equal "candidate-first private config digest" "$before_private_config_snapshot" "$(private_config_snapshot)"
@@ -380,7 +396,7 @@ else
   test "$after_migrations" -gt "$before_migrations"
 fi
 
-run_application "$previous_image" "$PREVIOUS_SHA" previous-rollback
+run_application_checked "$previous_image" "$PREVIOUS_SHA" previous-rollback
 test "$(database_snapshot)" = "$before_snapshot"
 test "$(private_config_snapshot)" = "$before_private_config_snapshot"
 
@@ -395,11 +411,11 @@ test "$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
 test "$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
   "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('usage_group_daily_rollups', 'usage_group_rollup_state', 'sub2api_plugin_installations', 'sub2api_plugin_bindings');")" -eq 0
 test "$(private_config_snapshot)" = "$before_private_config_snapshot"
-run_application "$previous_image" "$PREVIOUS_SHA" previous-restored
+run_application_checked "$previous_image" "$PREVIOUS_SHA" previous-restored
 test "$(database_snapshot)" = "$before_snapshot"
 test "$(private_config_snapshot)" = "$before_private_config_snapshot"
 
-run_application "$candidate_image" "$CANDIDATE_SHA" candidate-second
+run_application_checked "$candidate_image" "$CANDIDATE_SHA" candidate-second
 test "$(database_snapshot)" = "$before_snapshot"
 test "$(private_config_snapshot)" = "$before_private_config_snapshot"
 validate_v0183_migrations
