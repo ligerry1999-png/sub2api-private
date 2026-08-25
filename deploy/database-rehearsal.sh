@@ -325,7 +325,14 @@ run_application() {
     fi
     sleep 2
   done
-  docker logs --tail 160 "$active_app" >&2 || true
+  printf 'application health check failed: phase=%s image=%s\n' "$phase" "$image" >&2
+  docker inspect --format \
+    'container={{.Name}} running={{.State.Running}} status={{.State.Status}} exit_code={{.State.ExitCode}} error={{printf "%q" .State.Error}} started={{.State.StartedAt}} finished={{.State.FinishedAt}}' \
+    "$active_app" >&2 || true
+  docker inspect --format 'entrypoint={{json .Config.Entrypoint}} cmd={{json .Config.Cmd}}' \
+    "$active_app" >&2 || true
+  docker ps -a --filter "name=$active_app" --no-trunc >&2 || true
+  docker logs --timestamps "$active_app" >&2 || true
   return 1
 }
 
