@@ -116,6 +116,17 @@ private_config_snapshot() {
      );"
 }
 
+schema_snapshot() {
+  # Hash the schema definition so restoring the exact production dump can be
+  # checked without printing table definitions or sensitive data.
+  docker exec "$postgres" pg_dump \
+    --schema-only \
+    --no-owner \
+    --no-privileges \
+    -U sub2api \
+    -d sub2api | md5sum | awk '{print $1}'
+}
+
 video_price_snapshot() {
   scope="$1"
   table_name="$2"
@@ -396,6 +407,7 @@ fi
 
 before_snapshot="$(database_snapshot)"
 before_private_config_snapshot="$(private_config_snapshot)"
+before_schema_snapshot="$(schema_snapshot)"
 before_migrations="$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc 'SELECT COUNT(*) FROM schema_migrations;')"
 if test "$migration_220_preexisting" = true; then
   before_non_grok_video_prices="$(video_price_snapshot non-grok groups_video_price_backup_220 group_id)"
@@ -442,10 +454,7 @@ prepare_migration_220_rehearsal
 assert_equal "restored database row snapshot" "$before_snapshot" "$(database_snapshot)"
 assert_equal "restored migration count" "$before_migrations" \
   "$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc 'SELECT COUNT(*) FROM schema_migrations;')"
-assert_query_equal "restored pre-v0.1.183 group pricing columns" 0 \
-  "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'groups' AND column_name IN ('long_context_pricing_enabled', 'model_pricing');"
-assert_query_equal "restored pre-v0.1.183 rollup/plugin tables" 0 \
-  "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('usage_group_daily_rollups', 'usage_group_rollup_state', 'sub2api_plugin_installations', 'sub2api_plugin_bindings');"
+assert_equal "restored schema snapshot" "$before_schema_snapshot" "$(schema_snapshot)"
 assert_equal "restored private config digest" "$before_private_config_snapshot" "$(private_config_snapshot)"
 run_application_checked "$previous_image" "$PREVIOUS_SHA" previous-restored
 assert_equal "previous restored row snapshot" "$before_snapshot" "$(database_snapshot)"
