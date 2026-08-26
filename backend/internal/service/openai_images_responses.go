@@ -2341,6 +2341,10 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthResponseError(
 		return err
 	}
 	shouldDisable := s.handleOpenAIAccountUpstreamError(ctx, account, upstreamErr.StatusCode, headers, responseBody, requestedModel)
+	retryOnSameAccount := upstreamErr.Code == "image_generation_unavailable"
+	if !retryOnSameAccount {
+		retryOnSameAccount = account.IsPoolMode() && account.IsPoolModeRetryableStatus(upstreamErr.StatusCode)
+	}
 	return s.newOpenAIAccountFailoverError(
 		account,
 		upstreamErr.StatusCode,
@@ -2348,6 +2352,6 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthResponseError(
 		responseBody,
 		upstreamErr.clientMessage(),
 		shouldDisable,
-		!shouldDisable && account.IsPoolMode() && account.IsPoolModeRetryableStatus(upstreamErr.StatusCode),
+		!shouldDisable && retryOnSameAccount,
 	)
 }
