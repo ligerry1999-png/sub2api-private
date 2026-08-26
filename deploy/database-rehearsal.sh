@@ -117,14 +117,27 @@ private_config_snapshot() {
 }
 
 schema_snapshot() {
-  # Hash the schema definition so restoring the exact production dump can be
-  # checked without printing table definitions or sensitive data.
-  docker exec "$postgres" pg_dump \
-    --schema-only \
-    --no-owner \
-    --no-privileges \
-    -U sub2api \
-    -d sub2api | md5sum | awk '{print $1}'
+  # Hash a normalized catalog projection. A raw pg_dump text hash is unstable
+  # across restores because PostgreSQL can reorder internal metadata.
+  docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
+    "SELECT md5(
+       COALESCE((
+         SELECT string_agg(
+           table_name || ':' || column_name || ':' || ordinal_position || ':' ||
+           data_type || ':' || is_nullable || ':' || COALESCE(column_default, ''),
+           E'\\n' ORDER BY table_name, ordinal_position
+         )
+         FROM information_schema.columns
+         WHERE table_schema = 'public'
+       ), '') || E'\\n--tables--\\n' || COALESCE((
+         SELECT string_agg(table_name || ':' || table_type, E'\\n' ORDER BY table_name)
+         FROM information_schema.tables
+         WHERE table_schema = 'public'
+       ), '') || E'\\n--migrations--\\n' || COALESCE((
+         SELECT string_agg(filename, E'\\n' ORDER BY filename)
+         FROM schema_migrations
+       ), '')
+     );"
 }
 
 video_price_snapshot() {
