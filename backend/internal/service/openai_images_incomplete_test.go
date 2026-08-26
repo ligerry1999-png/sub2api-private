@@ -32,6 +32,9 @@ func TestExtractImagesUpstreamError_IncompleteIsRetryable(t *testing.T) {
 	if !strings.Contains(got.Message, "max_output_tokens") {
 		t.Fatalf("message should carry reason, got %q", got.Message)
 	}
+	if !strings.Contains(got.DiagnosticDetail, "last_event=response.incomplete") {
+		t.Fatalf("incomplete response should preserve upstream diagnostics, got %q", got.DiagnosticDetail)
+	}
 }
 
 // incomplete 因 content_filter → 400，重试无意义，不应触发 failover。
@@ -193,6 +196,36 @@ func TestImagesOAuthNonStreaming_TextFallbackReturnsCapabilityError(t *testing.T
 	}
 	if imgErr.Code != "image_generation_unavailable" {
 		t.Fatalf("text fallback should identify missing image execution, got %q", imgErr.Code)
+	}
+	if !strings.Contains(imgErr.DiagnosticDetail, "last_event=response.completed") ||
+		!strings.Contains(imgErr.DiagnosticDetail, "model=gpt-5.4-mini") {
+		t.Fatalf("text fallback should preserve bounded upstream diagnostics, got %q", imgErr.DiagnosticDetail)
+	}
+}
+
+func TestImagesOAuthStreaming_TextFallbackPreservesEarlierUpstreamEvents(t *testing.T) {
+	upstreamSSE := "event: response.created\n" +
+		"data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\",\"status\":\"in_progress\",\"model\":\"gpt-5.4-mini\"}}\n\n" +
+		"event: response.output_text.delta\n" +
+		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"I can provide a prompt, but no image was generated.\"}\n\n" +
+		"event: response.completed\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\",\"status\":\"completed\",\"model\":\"gpt-5.4-mini\",\"output\":[]}}\n\n"
+
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(upstreamSSE))}
+
+	svc := &OpenAIGatewayService{}
+	_, _, _, _, err := svc.handleOpenAIImagesOAuthStreamingResponse(resp, c, time.Now(), "b64_json", "image_generation", "gpt-image-2")
+
+	var imgErr *OpenAIImagesUpstreamError
+	if !errors.As(err, &imgErr) {
+		t.Fatalf("expected *OpenAIImagesUpstreamError, got %T: %v", err, err)
+	}
+	if !strings.Contains(imgErr.DiagnosticDetail, "response.created") ||
+		!strings.Contains(imgErr.DiagnosticDetail, "response.completed") {
+		t.Fatalf("streaming fallback should preserve the full bounded event sequence, got %q", imgErr.DiagnosticDetail)
 	}
 }
 

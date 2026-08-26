@@ -45,6 +45,9 @@ type OpenAIImagesUpstreamError struct {
 	Message           string
 	Param             string
 	UpstreamRequestID string
+	// DiagnosticDetail is a bounded summary of a no-image response. It stays
+	// separate from Message so the client-facing error remains stable.
+	DiagnosticDetail string
 }
 
 func (e *OpenAIImagesUpstreamError) Error() string {
@@ -624,6 +627,9 @@ func extractOpenAIImagesUpstreamError(body []byte) *OpenAIImagesUpstreamError {
 		}
 		upstreamErr = openAIImagesUpstreamErrorFromSSEPayload(payload)
 	})
+	if upstreamErr != nil && upstreamErr.DiagnosticDetail == "" {
+		upstreamErr.DiagnosticDetail = summarizeOpenAIImagesNoOutputBody(body)
+	}
 	return upstreamErr
 }
 
@@ -727,7 +733,11 @@ func extractOpenAIImagesModelRefusal(body []byte) string {
 }
 
 func openAIImagesTextFallbackError(body []byte) *OpenAIImagesUpstreamError {
-	return openAIImagesTextFallbackErrorForText(extractOpenAIImagesModelText(body))
+	err := openAIImagesTextFallbackErrorForText(extractOpenAIImagesModelText(body))
+	if err != nil && err.Code == "image_generation_unavailable" {
+		err.DiagnosticDetail = summarizeOpenAIImagesNoOutputBody(body)
+	}
+	return err
 }
 
 func openAIImagesTextFallbackErrorForText(text string) *OpenAIImagesUpstreamError {
@@ -755,7 +765,7 @@ func openAIImagesTextFallbackErrorForText(text string) *OpenAIImagesUpstreamErro
 // 记录到 ops 日志（上游无图、无标准错误的场景）。提取最终事件类型、response.status、
 // incomplete_details.reason，并附 body 截断片段，便于事后定位上游到底返回了什么。
 func summarizeOpenAIImagesNoOutputBody(body []byte) string {
-	var lastType, status, incompleteReason string
+	var lastType, status, model, incompleteReason string
 	forEachOpenAISSEDataPayload(string(body), func(payload []byte) {
 		if !gjson.ValidBytes(payload) {
 			return
@@ -766,6 +776,9 @@ func summarizeOpenAIImagesNoOutputBody(body []byte) string {
 		if resp := gjson.GetBytes(payload, "response"); resp.Exists() {
 			if s := strings.TrimSpace(resp.Get("status").String()); s != "" {
 				status = s
+			}
+			if m := strings.TrimSpace(resp.Get("model").String()); m != "" {
+				model = m
 			}
 			if r := strings.TrimSpace(resp.Get("incomplete_details.reason").String()); r != "" {
 				incompleteReason = r
@@ -779,6 +792,9 @@ func summarizeOpenAIImagesNoOutputBody(body []byte) string {
 	}
 	if status != "" {
 		fmt.Fprintf(&b, " status=%s", status)
+	}
+	if model != "" {
+		fmt.Fprintf(&b, " model=%s", model)
 	}
 	if incompleteReason != "" {
 		fmt.Fprintf(&b, " incomplete_reason=%s", incompleteReason)
@@ -1517,7 +1533,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthNonStreamingResponse(
 	}
 	if len(results) == 0 {
 		if upstreamErr := extractOpenAIImagesUpstreamError(body); upstreamErr != nil {
-			setOpsUpstreamError(c, upstreamErr.clientStatusCode(), upstreamErr.clientMessage(), "")
+			setOpsUpstreamError(c, upstreamErr.clientStatusCode(), upstreamErr.clientMessage(), upstreamErr.DiagnosticDetail)
 			if !IsOpenAIImagesRetryableUpstreamError(upstreamErr) {
 				writeOpenAIImagesUpstreamErrorResponse(c, upstreamErr)
 			}
@@ -1598,6 +1614,24 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 	pendingSeen := make(map[string]struct{})
 	streamMeta := openAIResponsesImageResult{Model: strings.TrimSpace(fallbackModel)}
 	var fallbackText strings.Builder
+	var diagnosticSSE strings.Builder
+	const maxDiagnosticSSE = 8192
+	appendDiagnosticPayload := func(data []byte) {
+		if diagnosticSSE.Len() >= maxDiagnosticSSE || len(data) == 0 {
+			return
+		}
+		remaining := maxDiagnosticSSE - diagnosticSSE.Len()
+		payload := string(data)
+		if len(payload) > remaining-8 {
+			payload = payload[:max(0, remaining-8)]
+		}
+		if payload == "" {
+			return
+		}
+		_, _ = diagnosticSSE.WriteString("data: ")
+		_, _ = diagnosticSSE.WriteString(payload)
+		_, _ = diagnosticSSE.WriteString("\n\n")
+	}
 	appendFallbackText := func(text string) {
 		if text == "" || fallbackText.Len() >= 600 {
 			return
@@ -1620,6 +1654,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 		if processDataDone || processDataErr != nil {
 			return
 		}
+		appendDiagnosticPayload(dataBytes)
 		if firstTokenMs == nil {
 			ms := int(time.Since(startTime).Milliseconds())
 			firstTokenMs = &ms
@@ -1701,13 +1736,17 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 			}
 			reconcileOpenAIResponsesImageResultSizes(finalResults, nil)
 			if len(finalResults) == 0 {
+				diagnosticBody := []byte(diagnosticSSE.String())
 				textFallbackErr := openAIImagesTextFallbackErrorForText(fallbackText.String())
 				if textFallbackErr == nil {
 					textFallbackErr = openAIImagesTextFallbackError(dataBytes)
 				}
 				if textFallbackErr != nil {
 					retryable := IsOpenAIImagesRetryableUpstreamError(textFallbackErr)
-					setOpsUpstreamError(c, textFallbackErr.clientStatusCode(), textFallbackErr.clientMessage(), summarizeOpenAIImagesNoOutputBody(dataBytes))
+					if textFallbackErr.DiagnosticDetail == "" {
+						textFallbackErr.DiagnosticDetail = summarizeOpenAIImagesNoOutputBody(diagnosticBody)
+					}
+					setOpsUpstreamError(c, textFallbackErr.clientStatusCode(), textFallbackErr.clientMessage(), textFallbackErr.DiagnosticDetail)
 					if !retryable && !clientDisconnected {
 						s.tryWriteOpenAIImagesStreamEvent(c, flusher, &clientDisconnected, &lastDownstreamWriteAt, "error", buildOpenAIImagesStreamErrorBodyFromUpstream(textFallbackErr))
 					}
@@ -1716,7 +1755,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 					return
 				}
 				outputErr := fmt.Errorf("upstream did not return image output")
-				setOpsUpstreamError(c, http.StatusBadGateway, "upstream did not return image output", summarizeOpenAIImagesNoOutputBody(dataBytes))
+				setOpsUpstreamError(c, http.StatusBadGateway, "upstream did not return image output", summarizeOpenAIImagesNoOutputBody(diagnosticBody))
 				s.tryWriteOpenAIImagesStreamEvent(c, flusher, &clientDisconnected, &lastDownstreamWriteAt, "error", buildOpenAIImagesStreamErrorBody(outputErr.Error()))
 				processDataErr = outputErr
 				processDataDone = true
@@ -1737,11 +1776,12 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthStreamingResponse(
 			processDataDone = true
 		case "error", "response.failed":
 			if upstreamErr := openAIImagesUpstreamErrorFromSSEPayload(dataBytes); upstreamErr != nil {
+				upstreamErr.DiagnosticDetail = summarizeOpenAIImagesNoOutputBody([]byte(diagnosticSSE.String()))
 				retryable := IsOpenAIImagesRetryableUpstreamError(upstreamErr)
 				if !clientDisconnected && (!retryable || c.Writer.Size() != writerSizeBeforeResponse) {
 					s.tryWriteOpenAIImagesStreamEvent(c, flusher, &clientDisconnected, &lastDownstreamWriteAt, "error", buildOpenAIImagesStreamErrorBodyFromUpstream(upstreamErr))
 				}
-				setOpsUpstreamError(c, upstreamErr.clientStatusCode(), upstreamErr.clientMessage(), "")
+				setOpsUpstreamError(c, upstreamErr.clientStatusCode(), upstreamErr.clientMessage(), upstreamErr.DiagnosticDetail)
 				processDataErr = upstreamErr
 				processDataDone = true
 				return
@@ -2308,6 +2348,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthResponseError(
 		UpstreamURL:        upstreamURL,
 		Kind:               kind,
 		Message:            upstreamErr.clientMessage(),
+		Detail:             upstreamErr.DiagnosticDetail,
 	})
 
 	responseBody := openAIImagesUpstreamErrorResponseBody(upstreamErr)
