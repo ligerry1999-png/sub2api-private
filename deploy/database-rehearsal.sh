@@ -423,35 +423,40 @@ validate_v0183_migrations
 
 after_migrations="$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc 'SELECT COUNT(*) FROM schema_migrations;')"
 if git -C "$CANDIDATE_DIR" diff --quiet "$PREVIOUS_SHA" "$CANDIDATE_SHA" -- backend/migrations; then
-  test "$after_migrations" -eq "$before_migrations"
+  assert_equal "migration count without migration changes" "$before_migrations" "$after_migrations"
 else
-  test "$after_migrations" -gt "$before_migrations"
+  if ! test "$after_migrations" -gt "$before_migrations"; then
+    printf 'migration count did not increase: before=%s after=%s\n' "$before_migrations" "$after_migrations" >&2
+    exit 1
+  fi
 fi
 
 run_application_checked "$previous_image" "$PREVIOUS_SHA" previous-rollback
-test "$(database_snapshot)" = "$before_snapshot"
-test "$(private_config_snapshot)" = "$before_private_config_snapshot"
+assert_equal "previous rollback row snapshot" "$before_snapshot" "$(database_snapshot)"
+assert_equal "previous rollback private config digest" "$before_private_config_snapshot" "$(private_config_snapshot)"
 
 # A real database rollback means restoring the pre-upgrade dump, not only
 # proving that the old binary can tolerate the forward-migrated schema.
 restore_production_dump
 prepare_migration_220_rehearsal
-test "$(database_snapshot)" = "$before_snapshot"
-test "$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc 'SELECT COUNT(*) FROM schema_migrations;')" -eq "$before_migrations"
-test "$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
-  "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'groups' AND column_name IN ('long_context_pricing_enabled', 'model_pricing');")" -eq 0
-test "$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
-  "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('usage_group_daily_rollups', 'usage_group_rollup_state', 'sub2api_plugin_installations', 'sub2api_plugin_bindings');")" -eq 0
-test "$(private_config_snapshot)" = "$before_private_config_snapshot"
+assert_equal "restored database row snapshot" "$before_snapshot" "$(database_snapshot)"
+assert_equal "restored migration count" "$before_migrations" \
+  "$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc 'SELECT COUNT(*) FROM schema_migrations;')"
+assert_query_equal "restored pre-v0.1.183 group pricing columns" 0 \
+  "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'groups' AND column_name IN ('long_context_pricing_enabled', 'model_pricing');"
+assert_query_equal "restored pre-v0.1.183 rollup/plugin tables" 0 \
+  "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('usage_group_daily_rollups', 'usage_group_rollup_state', 'sub2api_plugin_installations', 'sub2api_plugin_bindings');"
+assert_equal "restored private config digest" "$before_private_config_snapshot" "$(private_config_snapshot)"
 run_application_checked "$previous_image" "$PREVIOUS_SHA" previous-restored
-test "$(database_snapshot)" = "$before_snapshot"
-test "$(private_config_snapshot)" = "$before_private_config_snapshot"
+assert_equal "previous restored row snapshot" "$before_snapshot" "$(database_snapshot)"
+assert_equal "previous restored private config digest" "$before_private_config_snapshot" "$(private_config_snapshot)"
 
 run_application_checked "$candidate_image" "$CANDIDATE_SHA" candidate-second
-test "$(database_snapshot)" = "$before_snapshot"
-test "$(private_config_snapshot)" = "$before_private_config_snapshot"
+assert_equal "candidate-second row snapshot" "$before_snapshot" "$(database_snapshot)"
+assert_equal "candidate-second private config digest" "$before_private_config_snapshot" "$(private_config_snapshot)"
 validate_v0183_migrations
-test "$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc 'SELECT COUNT(*) FROM pg_index WHERE NOT indisvalid;')" = 0
+assert_query_equal "invalid database indexes" 0 \
+  "SELECT COUNT(*) FROM pg_index WHERE NOT indisvalid;"
 
 printf 'database rehearsal passed: previous=%s candidate=%s rows=%s migrations=%s->%s\n' \
   "$PREVIOUS_SHA" "$CANDIDATE_SHA" "$before_snapshot" "$before_migrations" "$after_migrations"
