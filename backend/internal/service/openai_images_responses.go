@@ -2252,25 +2252,6 @@ func (s *OpenAIGatewayService) shouldTryOpenAIImagesWorker(ctx context.Context, 
 	return s.openAIImagesWorkerEnabled(parsed) && !OpenAIImageWorkerFallbackAllowedFromContext(ctx)
 }
 
-const (
-	openAIImagesOAuthUnavailableCooldown = 30 * time.Minute
-	openAIImagesOAuthUnavailableReason   = "openai_images_oauth_tool_unavailable"
-)
-
-func (s *OpenAIGatewayService) coolOpenAIImagesOAuthTool(ctx context.Context, account *Account) {
-	if s == nil || s.accountRepo == nil || account == nil || account.Platform != PlatformOpenAI {
-		return
-	}
-	stateCtx, cancel := openAIAccountStateContext(ctx)
-	defer cancel()
-	resetAt := time.Now().Add(openAIImagesOAuthUnavailableCooldown)
-	if err := s.accountRepo.SetModelRateLimit(stateCtx, account.ID, openAIImageGenerationRateLimitKey, resetAt, openAIImagesOAuthUnavailableReason); err != nil {
-		logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Images OAuth tool cooldown write failed account_id=%d error=%v", account.ID, err)
-		return
-	}
-	logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Images OAuth tool unavailable account_id=%d reset_in=%s", account.ID, time.Until(resetAt).Truncate(time.Second))
-}
-
 func (s *OpenAIGatewayService) handleOpenAIImagesOAuthResponseError(
 	ctx context.Context,
 	c *gin.Context,
@@ -2352,21 +2333,10 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthResponseError(
 	})
 
 	responseBody := openAIImagesUpstreamErrorResponseBody(upstreamErr)
-	if upstreamErr.Code == "image_generation_unavailable" {
-		s.coolOpenAIImagesOAuthTool(ctx, account)
-		if responseWritten {
-			return err
-		}
-		return s.newOpenAIAccountFailoverError(
-			account,
-			upstreamErr.StatusCode,
-			headers,
-			responseBody,
-			upstreamErr.clientMessage(),
-			false,
-			false,
-		)
-	}
+	// Retryable image failures are request-scoped. Let the failover loop use its
+	// bounded same-account retry before switching accounts. Persisting a
+	// 30-minute model cooldown here would incorrectly take a healthy OAuth
+	// account out of service after one transient response.
 	if !retryable || responseWritten {
 		return err
 	}
