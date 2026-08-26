@@ -7,9 +7,9 @@
 - [x] 将本地候选快进推送到 GitHub `main`
 - [x] 修复 GitHub Security Scan 报出的 `golang.org/x/image` WebP 解码漏洞并同步升级护栏
 - [x] 修复数据库演练中后台聚合清理造成的快照误报并重新推送
-- [ ] 修复数据库演练恢复阶段把已存在迁移误判为旧 schema，并重新完成精确提交的数据库隔离演练
-- [ ] 并行完成修复后提交的 CI、安全扫描和精确提交的数据库隔离演练
-- [ ] 确认服务器没有执行 `docker build`、`go build` 或前端构建
+- [x] 修复数据库演练恢复阶段把已存在迁移误判为旧 schema，并重新完成精确提交的数据库隔离演练
+- [x] 并行完成修复后提交的 CI、安全扫描和精确提交的数据库隔离演练
+- [x] 确认本轮只读备份和 GitHub Runner 构建，服务器没有执行 `docker build`、`go build` 或前端构建
 - [ ] 仅触发一次 `Deploy Server / deploy=true`，由 GitHub 构建镜像
 - [ ] 核对线上提交、版本、健康状态、容器重启次数和私有路由
 - [ ] 记录 GitHub Actions 运行编号、结果和发布后状态
@@ -24,6 +24,15 @@
 - 第五次演练中候选版和旧版都打印了正确版本号，说明镜像构建与启动成功；但后段裸 `test` 失败没有标签，日志只有 `exit code 1`。已将回滚、恢复、迁移计数和索引检查统一改为带名称的断言，下一轮可直接定位真实数据差异。
 - 第六次演练定位到恢复断言误报：生产备份已包含迁移 221 的两列，脚本却固定要求恢复后列数为 0。现改为比较恢复前后的 schema 哈希，保留对迁移首次执行路径的单独校验。
 - 第七次演练发现整份 `pg_dump` 文本哈希会受 PostgreSQL 恢复后的内部元数据顺序影响，产生不稳定差异；现改为按 `information_schema` 表、列、默认值和迁移文件排序后的规范化哈希。
+- 第八次演练通过：提交 `96c480da1` 的 CI、Security Scan、Database Rehearsal 全部成功；演练完成升级、旧版回滚、原库恢复和再次升级，且 Runner 已清理生产备份。
+
+## 2026-08-26 最终门禁
+
+- CI：GitHub Actions run `32921036489`，success。
+- Security Scan：GitHub Actions run `32921036501`，success。
+- Database Rehearsal：GitHub Actions run `32921036507`，success。
+- 精确候选 SHA：`96c480da1cb865cddf7ddbb626cb8f6cbc5c72ac`。
+- 生产部署：未执行；服务器仍运行原版本。
 
 ---
 
