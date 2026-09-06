@@ -211,7 +211,7 @@ restore_production_dump() {
     -d postgres < "$PRODUCTION_DUMP"
 }
 
-validate_v0183_migrations() {
+validate_v021_migrations() {
   expected_migrations="$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
     "SELECT COUNT(*) FROM schema_migrations WHERE filename IN (
       '192_group_profit_control.sql',
@@ -246,9 +246,20 @@ validate_v0183_migrations() {
       '227_composite_routes_add_cn_providers.sql',
       '228_channel_pricing_multipliers.sql',
       '229_plugins.sql',
-      '230_plugin_artifacts.sql'
+      '230_plugin_artifacts.sql',
+      '231_add_usage_log_native_compaction_v2.sql',
+      '231_add_usage_log_requested_reasoning_effort.sql',
+      '231_user_restrict_public_groups.sql',
+      '232_add_usage_log_upstream_request_id.sql',
+      '232_channel_cache_write_1h_pricing.sql',
+      '232_group_force_openai_fast.sql',
+      '232_group_reasoning_effort_over_limit.sql',
+      '233_add_usage_log_upstream_request_id_index_notx.sql',
+      '233_group_free_openai_fast.sql',
+      '234_channel_max_reasoning_effort_multiplier.sql',
+      '234_group_codex_models_manifest_config.sql'
     );")"
-  assert_equal "v0.1.183 migration count" 33 "$expected_migrations"
+  assert_equal "v0.2.1 migration count" 44 "$expected_migrations"
   assert_query_equal "migration 220 backup table" t \
     "SELECT to_regclass('public.groups_video_price_backup_220') IS NOT NULL;"
   assert_equal "migration 220 non-Grok backup" "$before_non_grok_video_prices" \
@@ -323,6 +334,58 @@ validate_v0183_migrations() {
            AND table_name = 'sub2api_plugin_installations'
            AND column_name = 'artifact_data'
        );"
+  assert_query_equal "migration 231 usage metadata" 2 \
+    "SELECT COUNT(*) FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'usage_logs'
+       AND column_name IN ('native_compaction_v2', 'requested_reasoning_effort');"
+  assert_query_equal "migration 231 public-group restriction" t \
+    "SELECT COUNT(*) = 1 AND bool_and(is_nullable = 'NO' AND column_default = 'false')
+     FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'users'
+       AND column_name = 'restrict_public_groups';"
+  assert_query_equal "migrations 232-233 upstream request ID" t \
+    "SELECT EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'usage_logs'
+         AND column_name = 'upstream_request_id'
+     ) AND EXISTS (
+       SELECT 1 FROM pg_indexes
+       WHERE schemaname = 'public'
+         AND indexname = 'idx_usage_logs_upstream_request_id'
+     );"
+  assert_query_equal "migration 232 cache-write 1h pricing" 4 \
+    "SELECT COUNT(*) FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND column_name = 'cache_write_1h_price'
+       AND table_name IN (
+         'channel_model_pricing',
+         'channel_pricing_intervals',
+         'channel_account_stats_model_pricing',
+         'channel_account_stats_pricing_intervals'
+       );"
+  assert_query_equal "migrations 232-234 group OpenAI policies" 4 \
+    "SELECT COUNT(*) FROM information_schema.columns
+     WHERE table_schema = 'public'
+       AND table_name = 'groups'
+       AND column_name IN (
+         'force_openai_fast',
+         'free_openai_fast',
+         'max_reasoning_effort_over_limit',
+         'codex_models_manifest_config'
+       );"
+  assert_query_equal "migration 234 max-reasoning multiplier" t \
+    "SELECT EXISTS (
+       SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public'
+         AND table_name = 'channel_model_pricing'
+         AND column_name = 'max_reasoning_effort_multiplier'
+     ) AND EXISTS (
+       SELECT 1 FROM pg_constraint
+       WHERE conname = 'chk_channel_model_pricing_max_reasoning_effort_multiplier_positive'
+     );"
 }
 
 run_application() {
@@ -444,7 +507,7 @@ assert_query_equal "migration 191 record" 1 \
   "SELECT COUNT(*) FROM schema_migrations WHERE filename = '191_passkey_credentials.sql';"
 assert_query_equal "migration 191 passkey tables" t \
   "SELECT to_regclass('public.passkey_user_handles') IS NOT NULL AND to_regclass('public.passkey_credentials') IS NOT NULL;"
-validate_v0183_migrations
+validate_v021_migrations
 
 after_migrations="$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc 'SELECT COUNT(*) FROM schema_migrations;')"
 if git -C "$CANDIDATE_DIR" diff --quiet "$PREVIOUS_SHA" "$CANDIDATE_SHA" -- backend/migrations; then
@@ -476,7 +539,7 @@ assert_equal "previous restored private config digest" "$before_private_config_s
 run_application_checked "$candidate_image" "$CANDIDATE_SHA" candidate-second
 assert_equal "candidate-second row snapshot" "$before_snapshot" "$(database_snapshot)"
 assert_equal "candidate-second private config digest" "$before_private_config_snapshot" "$(private_config_snapshot)"
-validate_v0183_migrations
+validate_v021_migrations
 assert_query_equal "invalid database indexes" 0 \
   "SELECT COUNT(*) FROM pg_index WHERE NOT indisvalid;"
 
