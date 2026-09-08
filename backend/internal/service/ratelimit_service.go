@@ -2387,6 +2387,7 @@ func parseOpenAIImageTryAgainCooldown(body []byte) time.Duration {
 const upstreamModelNotFoundCooldown = 30 * time.Minute
 const upstreamModelNotFoundReason = "upstream_404_model_not_found"
 const upstreamCodexPlanGatedModelCooldown = 30 * time.Minute
+const upstreamCodexPlanGatedImageModelCooldown = 45 * time.Second
 const upstreamCodexPlanGatedModelReason = "upstream_400_codex_plan_gated_model"
 const tempUnschedBodyMaxBytes = 64 << 10
 const tempUnschedMessageMaxBytes = 2048
@@ -2419,6 +2420,10 @@ func (s *RateLimitService) HandleUpstreamModelNotFound(ctx context.Context, acco
 	modelKey := modelRateLimitKeyForUpstreamModelNotFound(ctx, account, requestedModel)
 	if modelKey == "" {
 		return false
+	}
+	if reason == upstreamCodexPlanGatedModelReason && OpenAIImagesEndpointFromContext(ctx) &&
+		(IsGPTImageGenerationModel(requestedModel) || IsGPTImageGenerationModel(modelKey)) {
+		cooldown = upstreamCodexPlanGatedImageModelCooldown
 	}
 	if shouldSkipCodexPlanGatedImageModelCooldown(ctx, reason, requestedModel, modelKey) {
 		return true

@@ -462,6 +462,7 @@ func TestRateLimitService_HandleUpstreamError_CodexPlanGatedImageModelKeepsCoold
 		"/v1/images/* 上的 plan-gated 拒绝是真实的能力缺失，必须保留冷却刹车")
 	require.Equal(t, "gpt-image-2", repo.modelRateLimitCalls[0].scope)
 	require.Equal(t, upstreamCodexPlanGatedModelReason, repo.modelRateLimitCalls[0].reason)
+	require.WithinDuration(t, time.Now().Add(upstreamCodexPlanGatedImageModelCooldown), repo.modelRateLimitCalls[0].resetAt, 5*time.Second)
 }
 
 // 仅 WithOpenAIImageGenerationIntent（/v1/responses 因模型名自动置位）不算专用生图
