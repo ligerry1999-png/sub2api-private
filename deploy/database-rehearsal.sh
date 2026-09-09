@@ -105,7 +105,11 @@ private_config_snapshot() {
        ), '') || E'\\n--groups--\\n' || COALESCE((
          SELECT string_agg(
            id::text || ':' || platform || ':' ||
-           COALESCE(models_list_config::text, 'null') || ':' ||
+           COALESCE(
+             (to_jsonb(groups) -> 'model_allowlist')::text,
+             (to_jsonb(groups) -> 'models_list_config')::text,
+             'null'
+           ) || ':' ||
            COALESCE(reasoning_effort_mappings::text, 'null') || ':' ||
            COALESCE(model_routing::text, 'null') || ':' ||
            COALESCE(messages_dispatch_model_config::text, 'null'),
