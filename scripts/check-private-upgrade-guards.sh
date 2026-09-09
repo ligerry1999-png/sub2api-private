@@ -90,7 +90,7 @@ test -f backend/migrations/190_add_users_email_alias_dedup_index_notx.sql || \
 
 assert_contains "$gateway_routes" 'guardResponsesSubpath := func(next gin.HandlerFunc) gin.HandlerFunc'
 assert_contains "$gateway_routes" 'POST("/responses/*subpath", guardResponsesSubpath('
-assert_contains "$gateway_routes" 'r.POST("/responses/*subpath", bodyLimit, clientRequestID, opsErrorLogger, endpointNorm, gin.HandlerFunc(apiKeyAuth), compositeTarget, requireGroupAnthropic, guardResponsesSubpath(responsesHandler))'
+assert_contains "$gateway_routes" 'rootRoute(http.MethodPost, "/responses/*subpath", bodyLimit, guardResponsesSubpath(responsesHandler))'
 assert_contains "$gateway_routes" 'codexDirect.POST("/responses/*subpath", guardResponsesSubpath(responsesHandler))'
 assert_contains "$compose" 'no-new-privileges:true'
 assert_contains "Dockerfile" 'LABEL org.opencontainers.image.revision="${COMMIT}"'
@@ -129,7 +129,7 @@ fi
 test "$actual_migration_sha" = "$expected_migration_sha" || \
   fail "backend/migrations/136_image_logs.sql checksum changed"
 
-test "$(tr -d '\r\n' < backend/cmd/server/VERSION)" = "0.2.1-private.1" || \
+test "$(tr -d '\r\n' < backend/cmd/server/VERSION)" = "0.2.4-private.1" || \
   fail "private version marker changed unexpectedly"
 
 printf 'private upgrade guards passed\n'

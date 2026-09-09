@@ -393,7 +393,7 @@ func buildOpenAIImagesResponsesRequest(parsed *OpenAIImagesRequest, toolModel st
 	}
 
 	req := []byte(`{"instructions":"","stream":true,"reasoning":{"effort":"medium","summary":"auto"},"parallel_tool_calls":true,"include":["reasoning.encrypted_content"],"model":"","store":false,"tool_choice":{"type":"image_generation"}}`)
-	req, _ = sjson.SetBytes(req, "model", openAIImagesResponsesMainModel)
+	req, _ = sjson.SetBytes(req, "model", openAIImagesResponsesMainModelValue())
 	req, _ = sjson.SetBytes(req, "instructions", openAIImagesVerbatimPromptInstructions)
 
 	input := []byte(`[{"type":"message","role":"user","content":[{"type":"input_text","text":""}]}]`)
@@ -1031,6 +1031,17 @@ func (s *OpenAIGatewayService) handleOpenAIImagesErrorResponse(
 		return nil, upErr
 	}
 
+	// A retired/configured Responses driver is not an image-model quota failure.
+	// Surface the actionable upstream error instead of cooling every image account
+	// and eventually hiding the configuration problem behind a generic 503.
+	if account.IsOpenAIOAuthLike() &&
+		isOpenAICodexPlanGatedModelError(resp.StatusCode, body) &&
+		strings.Contains(extractUpstreamErrorMessage(body), "'"+openAIImagesResponsesMainModelValue()+"'") {
+		upErr := openAIImagesUpstreamErrorFromHTTP(resp.StatusCode, resp.Header, body)
+		writeOpenAIImagesUpstreamErrorResponse(c, upErr)
+		return nil, upErr
+	}
+
 	// Track rate limits / decide whether to disable the account (secondary failover).
 	var modelForCooldown string
 	if len(requestedModel) > 0 {
@@ -1401,8 +1412,13 @@ func openAIImagesToolUsageFromGJSON(value gjson.Result) (OpenAIUsage, bool) {
 	if !inputOK || !outputOK || !imageOutputOK {
 		return OpenAIUsage{}, false
 	}
+	imageInputTokens, _ := boundedJSONNonNegativeInt(value.Get("input_tokens_details.image_tokens"))
+	if imageInputTokens > inputTokens {
+		imageInputTokens = inputTokens
+	}
 	return OpenAIUsage{
 		InputTokens:       inputTokens,
+		ImageInputTokens:  imageInputTokens,
 		OutputTokens:      outputTokens,
 		ImageOutputTokens: imageOutputTokens,
 	}, true
@@ -2187,7 +2203,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
 		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
-		if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
+		if s.shouldFailoverOpenAIUpstreamResponse(account, resp.StatusCode, upstreamMsg, respBody) {
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				ProxyID:            opsUpstreamProxyID(account),
 				ProxyName:          opsUpstreamProxyName(account),
@@ -2295,18 +2311,18 @@ func (s *OpenAIGatewayService) shouldTryOpenAIImagesWorker(ctx context.Context, 
 }
 
 const (
-	openAIImagesOAuthUnavailableDefaultCooldown = 30 * time.Minute
+	openAIImagesOAuthUnavailableDefaultCooldown = 45 * time.Second
 	openAIImagesOAuthUnavailableReason          = "openai_images_oauth_tool_unavailable"
 )
 
 // shouldCoolOpenAIImagesToolForError decides whether an image_generation_unavailable
 // verdict is durable enough to park the account's image tool for
-// openAIImagesOAuthUnavailableCooldown.
+// openAIImagesOAuthUnavailableCooldown (capped at 45 seconds).
 //
 // Only an upstream error frame that names the condition qualifies. A verdict the
 // gateway synthesized from the model's plain-text reply does not: it merely says
 // this prompt produced words instead of an image, which is prompt-dependent and
-// happens on healthy accounts. Writing a 30-minute account-level cooldown from it
+// happens on healthy accounts. Writing a long account-level cooldown from it
 // is doubly wrong because the very same error is classified retryable
 // (IsOpenAIImagesRetryableUpstreamError: status >= 500) and drives
 // newOpenAIAccountFailoverError — so one such reply walks the pool and cools every
@@ -2330,9 +2346,12 @@ func (s *OpenAIGatewayService) coolOpenAIImagesOAuthTool(ctx context.Context, ac
 		settings, err := s.settingService.GetOpenAIImagesOAuthUnavailableCooldownSettings(stateCtx)
 		if err != nil {
 			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Images OAuth tool cooldown setting read failed error=%v", err)
-		} else {
+		} else if settings != nil && settings.CooldownMinutes > 0 {
 			cooldown = time.Duration(settings.CooldownMinutes) * time.Minute
 		}
+	}
+	if cooldown > openAIImagesOAuthUnavailableDefaultCooldown {
+		cooldown = openAIImagesOAuthUnavailableDefaultCooldown
 	}
 	resetAt := time.Now().Add(cooldown)
 	if err := s.accountRepo.SetModelRateLimit(stateCtx, account.ID, openAIImageGenerationRateLimitKey, resetAt, openAIImagesOAuthUnavailableReason); err != nil {

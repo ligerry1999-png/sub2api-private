@@ -44,7 +44,7 @@ func TestRateLimitService_HandleOpenAIImageRateLimit_ParsesTryAgainCooldown(t *t
 	require.WithinDuration(t, before.Add(2*time.Second), call.resetAt, time.Second)
 }
 
-func TestRateLimitService_HandleOpenAIImageRateLimit_DefaultsToOneMinute(t *testing.T) {
+func TestRateLimitService_HandleOpenAIImageRateLimit_DefaultsToFortyFiveSeconds(t *testing.T) {
 	repo := &modelNotFoundAccountRepoStub{}
 	svc := &RateLimitService{accountRepo: repo}
 	account := &Account{ID: 202, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
@@ -58,7 +58,21 @@ func TestRateLimitService_HandleOpenAIImageRateLimit_DefaultsToOneMinute(t *test
 	call := repo.modelRateLimitCalls[0]
 	require.Equal(t, openAIImageGenerationRateLimitKey, call.scope)
 	require.Equal(t, openAIImageRateLimitReason, call.reason)
-	require.WithinDuration(t, before.Add(time.Minute), call.resetAt, time.Second)
+	require.WithinDuration(t, before.Add(45*time.Second), call.resetAt, time.Second)
+}
+
+func TestRateLimitService_HandleOpenAIImageRateLimitCapsUpstreamLongReset(t *testing.T) {
+	repo := &modelNotFoundAccountRepoStub{}
+	svc := &RateLimitService{accountRepo: repo}
+	account := &Account{ID: 2021, Platform: PlatformOpenAI, Type: AccountTypeOAuth}
+	body := []byte(`{"error":{"type":"rate_limit_exceeded","message":"Rate limit reached for gpt-image-2. Please try again in 30 minutes."}}`)
+
+	before := time.Now()
+	handled := svc.HandleOpenAIImageRateLimit(context.Background(), account, http.StatusTooManyRequests, http.Header{"Retry-After": []string{"3600"}}, body)
+
+	require.True(t, handled)
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	require.WithinDuration(t, before.Add(45*time.Second), repo.modelRateLimitCalls[0].resetAt, time.Second)
 }
 
 func TestOpenAIGatewayService_HandleOpenAIAccountUpstreamError_ImageRateLimitDoesNotBlockWholeAccount(t *testing.T) {
@@ -233,7 +247,7 @@ func TestOpenAIGatewayService_CoolOpenAIImagesOAuthToolUsesConfiguredCooldown(t 
 	svc.coolOpenAIImagesOAuthTool(context.Background(), &Account{ID: 206, Platform: PlatformOpenAI, Type: AccountTypeOAuth})
 
 	require.Len(t, accountRepo.modelRateLimitCalls, 1)
-	require.WithinDuration(t, before.Add(7*time.Minute), accountRepo.modelRateLimitCalls[0].resetAt, time.Second)
+	require.WithinDuration(t, before.Add(45*time.Second), accountRepo.modelRateLimitCalls[0].resetAt, time.Second)
 }
 
 func TestOpenAIGatewayServiceForwardImages_CapabilityLossCoolsImageScope(t *testing.T) {

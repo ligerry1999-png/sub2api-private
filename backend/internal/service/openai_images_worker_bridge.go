@@ -230,18 +230,29 @@ func openAIImagesWorkerCooldownUntilForError(err error) time.Time {
 				unit := strings.Trim(fields[1], ".,;:")
 				switch {
 				case strings.HasPrefix(unit, "minute"):
-					return now.Add(time.Duration(amount) * time.Minute)
+					return capOpenAIImageWorkerCooldown(now, now.Add(time.Duration(amount)*time.Minute))
 				case strings.HasPrefix(unit, "hour"):
-					return now.Add(time.Duration(amount) * time.Hour)
+					return capOpenAIImageWorkerCooldown(now, now.Add(time.Duration(amount)*time.Hour))
 				case strings.HasPrefix(unit, "second"):
-					return now.Add(time.Duration(amount) * time.Second)
+					return capOpenAIImageWorkerCooldown(now, now.Add(time.Duration(amount)*time.Second))
 				case strings.HasPrefix(unit, "day"):
-					return now.Add(time.Duration(amount) * 24 * time.Hour)
+					return capOpenAIImageWorkerCooldown(now, now.Add(time.Duration(amount)*24*time.Hour))
 				}
 			}
 		}
 	}
-	return now.Add(openAIImageWorkerDefaultCooldown)
+	return capOpenAIImageWorkerCooldown(now, now.Add(openAIImageWorkerDefaultCooldown))
+}
+
+func capOpenAIImageWorkerCooldown(now, resetAt time.Time) time.Time {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	maxResetAt := now.Add(openAIImageWorkerMaxCooldown)
+	if resetAt.IsZero() || !resetAt.After(now) || resetAt.After(maxResetAt) {
+		return maxResetAt
+	}
+	return resetAt
 }
 
 func openAIImagesWorkerShouldSwitchAccount(err error) bool {

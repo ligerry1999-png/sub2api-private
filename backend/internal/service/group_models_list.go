@@ -2,6 +2,10 @@ package service
 
 import "strings"
 
+// GroupModelsListConfig is retained as a source-compatibility alias for
+// private migration/test code. Runtime group state uses ModelAllowlist.
+type GroupModelsListConfig = GroupModelAllowlist
+
 func normalizeGroupModelsListConfig(cfg GroupModelsListConfig) GroupModelsListConfig {
 	out := GroupModelsListConfig{Enabled: cfg.Enabled}
 	if len(cfg.Models) == 0 {
@@ -28,5 +32,5 @@ func normalizeGroupModelsListConfig(cfg GroupModelsListConfig) GroupModelsListCo
 }
 
 func (g *Group) CustomModelsListEnabled() bool {
-	return g != nil && g.ModelsListConfig.Enabled && len(g.ModelsListConfig.Models) > 0
+	return g != nil && g.ModelAllowlist.Enabled && len(g.ModelAllowlist.Models) > 0
 }

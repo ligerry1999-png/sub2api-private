@@ -126,8 +126,8 @@ func TestClassifyOpenAIImagesWorkerFailure(t *testing.T) {
 func TestOpenAIImagesWorkerCooldownUntilForError(t *testing.T) {
 	before := time.Now()
 	until := openAIImagesWorkerCooldownUntilForError(assertError("You've hit the plus plan limit for image generations requests. You can create more images when the limit resets in 17 hours and 2 minutes."))
-	require.True(t, until.After(before.Add(16*time.Hour)), "cooldown should use the reset hint")
-	require.True(t, until.Before(before.Add(18*time.Hour)), "cooldown should stay close to the reset hint")
+	require.True(t, until.After(before.Add(44*time.Second)), "image worker cooldown should be bounded")
+	require.True(t, until.Before(before.Add(46*time.Second)), "image worker cooldown should be bounded to 45 seconds")
 }
 
 func TestShouldTryOpenAIImagesWorkerSkipsKnownFailedWorkerDuringNativeFallback(t *testing.T) {

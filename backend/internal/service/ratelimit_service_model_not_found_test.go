@@ -526,3 +526,23 @@ func TestRateLimitService_HandleUpstreamError_ModelNotFoundImageModelStillCoolsD
 	require.Len(t, repo.modelRateLimitCalls, 1, "守卫只作用于 codex plan-gated 分支")
 	require.Equal(t, upstreamModelNotFoundReason, repo.modelRateLimitCalls[0].reason)
 }
+
+func TestRateLimitService_HandleUpstreamError_ImageModelNotFoundIsCappedAtFortyFiveSeconds(t *testing.T) {
+	repo := &modelNotFoundAccountRepoStub{}
+	svc := &RateLimitService{accountRepo: repo}
+	account := openAICodexPlanGatedOAuthAccount()
+
+	before := time.Now()
+	handled := svc.HandleUpstreamError(
+		WithOpenAIImagesEndpoint(context.Background()),
+		account,
+		http.StatusNotFound,
+		http.Header{},
+		[]byte(`{"error":{"message":"The model 'gpt-image-2' does not exist","code":"model_not_found"}}`),
+		"gpt-image-2",
+	)
+
+	require.True(t, handled)
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	require.WithinDuration(t, before.Add(45*time.Second), repo.modelRateLimitCalls[0].resetAt, time.Second)
+}

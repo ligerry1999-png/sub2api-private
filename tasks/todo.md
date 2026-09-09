@@ -1,3 +1,26 @@
+# Sub2API v0.2.4 私有升级与生图冷却修复
+
+> 开始日期：2026-09-09
+>
+> 目标：合并官方 `v0.2.4` 的 Image 2.5、OAuth 图片辅助模型和 429 修复，同时保留私人异步生图队列、支付、图片日志、ChatGPT2API worker/fallback、管理员权限和 GitHub Actions 部署保护；图片相关冷却最多 45 秒，普通文本模型冷却规则不变。
+
+- [x] 从线上精确 SHA `1d2cbd56a9ec0ad2fbf6446a20ebfcc35b1f480e` 建立升级保护分支
+- [x] 合并官方 `v0.2.4`，人工解决 VERSION、图片辅助模型和网关私有路由冲突
+- [x] 恢复并核对私人支付、异步 image-jobs、图片日志、ChatGPT2API 和 Tanzhongyu 部署文件
+- [x] 将 OAuth 图片 worker、图片 429、图片能力丢失和图片模型 404 冷却统一限制为最多 45 秒
+- [x] 迁移旧 `ModelsListConfig` 引用到官方 `ModelAllowlist`，保留旧类型兼容层
+- [ ] 本地轻量检查、前端检查和私有护栏通过
+- [ ] 推送私有仓库并等待精确 SHA 的 CI、安全扫描、数据库演练通过
+- [ ] 仅通过 GitHub Actions `deploy=true` 部署，服务器不构建
+- [ ] 上线后核对版本、健康状态、私人路由、支付、队列和图片冷却
+
+## Review
+
+- 当前线上尚未修改；候选分支仍处于未提交合并状态。
+- 本机没有系统级 Go 1.27，后端完整测试交由 GitHub Actions；本地先完成脚本、前端和静态检查。
+
+---
+
 # Sub2API v0.1.183 GitHub 发布执行
 
 > 发布原则：只在 GitHub Runner 构建镜像；生产服务器只备份数据库、加载预构建镜像并使用 `--no-build` 重启，不在服务器编译源码。
