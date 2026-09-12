@@ -98,7 +98,8 @@ private_config_snapshot() {
     "SELECT md5(
        COALESCE((
          SELECT string_agg(
-           id::text || ':' || COALESCE(credentials::text, 'null') || ':' || COALESCE(extra::text, 'null'),
+           id::text || ':' || COALESCE(credentials::text, 'null') || ':' ||
+           COALESCE((extra - 'codex_fingerprint_seed')::text, 'null'),
            E'\\n' ORDER BY id
          )
          FROM accounts
