@@ -947,7 +947,7 @@ func TestBoundedJSONNonNegativeInt(t *testing.T) {
 
 func TestOpenAIGatewayServiceForwardImages_OAuthRetriesOnlyToolChoiceCompatibilityError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	body := []byte(`{"model":"gpt-image-2","prompt":"draw a cat"}`)
+	body := []byte(`{"model":"gpt-image-1","prompt":"draw a cat"}`)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
