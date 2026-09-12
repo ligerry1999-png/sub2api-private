@@ -2157,6 +2157,21 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		})
 		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
 	}
+	if !direct && isOpenAIImagesToolChoiceCompatibilityError(resp) {
+		compatBody, compatErr := buildOpenAIImagesResponsesAutoToolChoiceRequest(parsed, upstreamModel)
+		if compatErr == nil {
+			compatReq, requestErr := s.buildUpstreamRequest(upstreamCtx, c, account, compatBody, token, true, parsed.StickySessionSeed(), false)
+			if requestErr == nil {
+				compatReq.Header.Set("Content-Type", "application/json")
+				compatReq.Header.Set("Accept", "text/event-stream")
+				compatReq.Header.Set("OpenAI-Beta", "responses=experimental")
+				if compatResp, compatRequestErr := s.doOpenAIUpstream(compatReq, proxyURL, account); compatRequestErr == nil && compatResp != nil {
+					_ = resp.Body.Close()
+					resp = compatResp
+				}
+			}
+		}
+	}
 	if resp.StatusCode >= 400 {
 		respBody := s.readUpstreamErrorBody(resp)
 		_ = resp.Body.Close()
