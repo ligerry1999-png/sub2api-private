@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -2085,6 +2086,28 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		return nil, err
 	}
 
+	// 私有 ChatGPT2API worker 继续服务非原生直通模型；已支持原生
+	// Codex Images 的模型直接走官方图片端点，避免被 Responses 路径改写。
+	if !direct && s.shouldTryOpenAIImagesWorker(ctx, parsed) {
+		result, bridgeErr := s.forwardOpenAIImagesViaWorker(upstreamCtx, c, account, parsed, requestModel, token, startTime)
+		if bridgeErr == nil {
+			return result, nil
+		}
+		workerFallbackAllowed := s.openAIImagesWorkerFallbackEnabled() && OpenAIImageWorkerFallbackAllowedFromContext(ctx)
+		if errors.Is(bridgeErr, errOpenAIImagesWorkerUnsupported) {
+			workerFallbackAllowed = s.openAIImagesWorkerFallbackEnabled()
+		}
+		if openAIImagesWorkerShouldSwitchAccount(bridgeErr) && !workerFallbackAllowed {
+			if cooldownUntil := openAIImagesWorkerCooldownUntilForError(bridgeErr); !cooldownUntil.IsZero() {
+				s.BlockOpenAIImageWorkerScheduling(account, cooldownUntil)
+			}
+			return nil, newOpenAIImagesWorkerFailoverError(bridgeErr)
+		}
+		if !workerFallbackAllowed {
+			return nil, bridgeErr
+		}
+	}
+
 	responsesBody, targetURL, err := buildOpenAIImagesOAuthPayload(parsed, upstreamModel)
 	if err != nil {
 		return nil, err
@@ -2115,6 +2138,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		proxyURL = account.Proxy.URL()
 	}
 	upstreamStart := time.Now()
+	nativeStart := upstreamStart
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
@@ -2229,7 +2253,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		if direct {
 			usage, imageCount, imageOutputSizes, err = s.handleCodexDirectImagesNonStreamingResponse(resp, c, parsed)
 		} else {
-			usage, imageCount, imageOutputSizes, err = s.handleOpenAIImagesOAuthNonStreamingResponse(resp, c, parsed.ResponseFormat, upstreamModel)
+			usage, imageCount, imageOutputSizes, err = s.handleOpenAIImagesOAuthNonStreamingResponse(resp, c, account, parsed, parsed.ResponseFormat, upstreamModel, startTime, nativeStart)
 		}
 		if err != nil {
 			return nil, s.handleOpenAIImagesOAuthResponseError(
