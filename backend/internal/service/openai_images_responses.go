@@ -2157,6 +2157,24 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		})
 		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
 	}
+	if direct && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed || isOpenAIImagesToolChoiceCompatibilityError(resp)) {
+		// 某些上游账号尚未开放原生 Images 端点，或仍返回旧的 tool_choice
+		// 兼容错误。此时只回退到 Responses，不把普通 4xx/5xx 静默改路由。
+		responsesBody, buildErr := buildOpenAIImagesResponsesRequest(parsed, upstreamModel)
+		if buildErr == nil {
+			compatReq, requestErr := s.buildUpstreamRequest(upstreamCtx, c, account, responsesBody, token, true, parsed.StickySessionSeed(), false)
+			if requestErr == nil {
+				compatReq.Header.Set("Content-Type", "application/json")
+				compatReq.Header.Set("Accept", "text/event-stream")
+				compatReq.Header.Set("OpenAI-Beta", "responses=experimental")
+				if compatResp, compatRequestErr := s.doOpenAIUpstream(compatReq, proxyURL, account); compatRequestErr == nil && compatResp != nil {
+					_ = resp.Body.Close()
+					resp = compatResp
+					direct = false
+				}
+			}
+		}
+	}
 	if !direct && isOpenAIImagesToolChoiceCompatibilityError(resp) {
 		compatBody, compatErr := buildOpenAIImagesResponsesAutoToolChoiceRequest(parsed, upstreamModel)
 		if compatErr == nil {
