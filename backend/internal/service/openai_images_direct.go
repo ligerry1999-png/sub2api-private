@@ -189,7 +189,12 @@ func codexDirectImagesUsage(body []byte) (OpenAIUsage, bool) {
 	return usage, true
 }
 
-func (s *OpenAIGatewayService) handleCodexDirectImagesNonStreamingResponse(resp *http.Response, c *gin.Context, parsed *OpenAIImagesRequest) (OpenAIUsage, int, []string, error) {
+func (s *OpenAIGatewayService) handleCodexDirectImagesNonStreamingResponse(
+	resp *http.Response,
+	c *gin.Context,
+	parsed *OpenAIImagesRequest,
+	resultsOut *[]openAIResponsesImageResult,
+) (OpenAIUsage, int, []string, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
 		if shouldClassifyOpenAIUpstreamStreamReadError(err) {
@@ -200,6 +205,9 @@ func (s *OpenAIGatewayService) handleCodexDirectImagesNonStreamingResponse(resp 
 	results, err := parseCodexDirectImagesResponse(body)
 	if err != nil {
 		return OpenAIUsage{}, 0, nil, err
+	}
+	if resultsOut != nil {
+		*resultsOut = append((*resultsOut)[:0], results...)
 	}
 	usage, _ := codexDirectImagesUsage(body)
 	if observer := upstreamResponseModelObserverFromContext(c); observer != nil {
@@ -243,4 +251,69 @@ func (s *OpenAIGatewayService) handleCodexDirectImagesNonStreamingResponse(resp 
 	}
 	c.Data(resp.StatusCode, contentType, body)
 	return usage, len(results), openAIResponsesImageResultSizes(results), nil
+}
+
+func codexDirectImagesSSEResults(payload []byte, parsed *OpenAIImagesRequest) []openAIResponsesImageResult {
+	if len(payload) == 0 || !gjson.ValidBytes(payload) {
+		return nil
+	}
+	eventType := strings.TrimSpace(gjson.GetBytes(payload, "type").String())
+	if strings.HasSuffix(eventType, ".partial_image") {
+		return nil
+	}
+	root := gjson.ParseBytes(payload)
+	results := make([]openAIResponsesImageResult, 0, 1)
+	seen := make(map[string]struct{})
+	appendItem := func(item gjson.Result) {
+		result := strings.TrimSpace(item.Get("b64_json").String())
+		if result == "" {
+			result = strings.TrimSpace(item.Get("result").String())
+		}
+		if result == "" {
+			return
+		}
+		meta := func(key string) string {
+			if value := strings.TrimSpace(item.Get(key).String()); value != "" {
+				return value
+			}
+			return strings.TrimSpace(root.Get(key).String())
+		}
+		image := openAIResponsesImageResult{
+			Result:        result,
+			RevisedPrompt: meta("revised_prompt"),
+			OutputFormat:  meta("output_format"),
+			Size:          meta("size"),
+			Quality:       meta("quality"),
+			Background:    meta("background"),
+			Model:         meta("model"),
+		}
+		if image.Size == "" {
+			image.Size = detectOpenAIImageResultSize(result)
+		}
+		if image.Model == "" && parsed != nil {
+			image.Model = strings.TrimSpace(parsed.Model)
+		}
+		key := strings.TrimSpace(image.Result)
+		if key == "" {
+			return
+		}
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		results = append(results, image)
+	}
+
+	appendItem(root.Get("item"))
+	for _, path := range []string{"data", "output", "response.output"} {
+		if items := root.Get(path); items.IsArray() {
+			for _, item := range items.Array() {
+				appendItem(item)
+			}
+		}
+	}
+	if strings.HasSuffix(eventType, ".completed") || strings.Contains(eventType, "image_generation") || strings.Contains(eventType, "image_edit") {
+		appendItem(root)
+	}
+	return results
 }

@@ -2244,11 +2244,18 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 	// 与 handleOpenAIImagesOAuthResponseError 的比较端同口径：排除非流式 JSON
 	// keepalive 心跳字节，避免 failover 第 2 轮起把上一轮心跳残留误判为已写响应。
 	writerSizeBeforeResponse := OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c)
+	var directResults []openAIResponsesImageResult
 	if parsed.Stream {
 		if direct {
-			usage, imageCount, imageOutputSizes, firstTokenMs, err = s.handleOpenAIImagesStreamingResponse(resp, c, startTime, parsed)
+			usage, imageCount, imageOutputSizes, firstTokenMs, err = s.handleOpenAIImagesStreamingResponse(resp, c, startTime, parsed, &directResults)
 		} else {
 			usage, imageCount, imageOutputSizes, firstTokenMs, err = s.handleOpenAIImagesOAuthStreamingResponse(resp, c, startTime, parsed.ResponseFormat, openAIImagesStreamPrefix(parsed), upstreamModel)
+		}
+		if direct && len(directResults) > 0 {
+			s.recordOpenAIImagesLog(upstreamCtx, c, account, parsed, upstreamModel, imageLogSourceSub2API, resp.Header.Get("x-request-id"), startTime, directResults, map[string]any{
+				"route":              imageLogSourceSub2API,
+				"native_duration_ms": time.Since(nativeStart).Milliseconds(),
+			})
 		}
 		if err != nil {
 			if imageCount > 0 {
@@ -2284,9 +2291,15 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		}
 	} else {
 		if direct {
-			usage, imageCount, imageOutputSizes, err = s.handleCodexDirectImagesNonStreamingResponse(resp, c, parsed)
+			usage, imageCount, imageOutputSizes, err = s.handleCodexDirectImagesNonStreamingResponse(resp, c, parsed, &directResults)
 		} else {
 			usage, imageCount, imageOutputSizes, err = s.handleOpenAIImagesOAuthNonStreamingResponse(resp, c, account, parsed, parsed.ResponseFormat, upstreamModel, startTime, nativeStart)
+		}
+		if direct && len(directResults) > 0 {
+			s.recordOpenAIImagesLog(upstreamCtx, c, account, parsed, upstreamModel, imageLogSourceSub2API, resp.Header.Get("x-request-id"), startTime, directResults, map[string]any{
+				"route":              imageLogSourceSub2API,
+				"native_duration_ms": time.Since(nativeStart).Milliseconds(),
+			})
 		}
 		if err != nil {
 			return nil, s.handleOpenAIImagesOAuthResponseError(

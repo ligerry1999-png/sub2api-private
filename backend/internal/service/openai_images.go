@@ -696,7 +696,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	imageCount := parsed.N
 	var firstTokenMs *int
 	if parsed.Stream && isEventStreamResponse(resp.Header) {
-		streamUsage, streamCount, streamSizes, ttft, err := s.handleOpenAIImagesStreamingResponse(resp, c, startTime, nil)
+		streamUsage, streamCount, streamSizes, ttft, err := s.handleOpenAIImagesStreamingResponse(resp, c, startTime, nil, nil)
 		if err != nil {
 			if streamCount > 0 {
 				return &OpenAIForwardResult{
@@ -949,6 +949,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 	c *gin.Context,
 	startTime time.Time,
 	direct *OpenAIImagesRequest,
+	directResultsOut *[]openAIResponsesImageResult,
 ) (OpenAIUsage, int, []string, *int, error) {
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
@@ -975,6 +976,23 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 	fallbackTooLarge := false
 	var sseData openAISSEDataAccumulator
 	var streamErr error
+	directResultsSeen := make(map[string]struct{})
+	appendDirectResults := func(data []byte) {
+		if direct == nil || directResultsOut == nil {
+			return
+		}
+		for _, result := range codexDirectImagesSSEResults(data, direct) {
+			key := strings.TrimSpace(result.Result)
+			if key == "" {
+				continue
+			}
+			if _, exists := directResultsSeen[key]; exists {
+				continue
+			}
+			directResultsSeen[key] = struct{}{}
+			*directResultsOut = append(*directResultsOut, result)
+		}
+	}
 	finish := func() error {
 		if direct == nil {
 			return nil
@@ -1005,6 +1023,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 		if direct == nil || string(dataBytes) == "[DONE]" {
 			return
 		}
+		appendDirectResults(dataBytes)
 		if directUsage, ok := codexDirectImagesUsage(dataBytes); ok {
 			mergeOpenAIUsageNonZero(&usage, directUsage)
 		}

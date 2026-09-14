@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -50,6 +51,98 @@ func TestCodexDirectImagesRouting(t *testing.T) {
 			require.Equal(t, "data:image/png;base64,aGVsbG8=", gjson.GetBytes(rec.Body.Bytes(), "data.0.url").String())
 		})
 	}
+}
+
+func TestCodexDirectImagesNonStreamingWritesPrivateImageLog(t *testing.T) {
+	body := []byte(`{"model":"gpt-image-2","prompt":"direct non-stream log","response_format":"b64_json"}`)
+	c, _ := newOpenAIImagesTestContext(t, body)
+	c.Set("api_key", &APIKey{ID: 42, User: &User{ID: 7, Email: "image-log@example.com"}})
+	pngBase64 := base64.StdEncoding.EncodeToString(testPNGBytes(t))
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"Content-Type": []string{"application/json"},
+			"X-Request-Id": []string{"req_direct_non_stream_log"},
+		},
+		Body: io.NopCloser(strings.NewReader(`{"data":[{"b64_json":"` + pngBase64 + `","output_format":"png"}]}`)),
+	}}
+	svc := newOpenAIImagesTestService(upstream)
+	repo := &fakeImageLogRepository{}
+	svc.imageLogService, _ = newTestImageLogService(t, repo)
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+
+	result, err := svc.ForwardImages(context.Background(), c, directImagesTestAccount(), body, parsed, "")
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.ImageCount)
+	require.Len(t, repo.created, 1)
+	require.Equal(t, "req_direct_non_stream_log", repo.created[0].RequestID)
+	require.Equal(t, imageLogSourceSub2API, repo.created[0].Source)
+	require.Equal(t, "direct non-stream log", repo.created[0].Prompt)
+	require.Len(t, repo.created[0].Images, 1)
+}
+
+func TestCodexDirectImagesStreamingWritesPrivateImageLog(t *testing.T) {
+	body := []byte(`{"model":"gpt-image-2","prompt":"direct stream log","stream":true}`)
+	c, _ := newOpenAIImagesTestContext(t, body)
+	c.Set("api_key", &APIKey{ID: 42, User: &User{ID: 7, Email: "image-log@example.com"}})
+	pngBase64 := base64.StdEncoding.EncodeToString(testPNGBytes(t))
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"Content-Type": []string{"text/event-stream"},
+			"X-Request-Id": []string{"req_direct_stream_log"},
+		},
+		Body: io.NopCloser(strings.NewReader("data: {\"type\":\"image_generation.completed\",\"b64_json\":\"" + pngBase64 + "\",\"output_format\":\"png\"}\n\n")),
+	}}
+	svc := newOpenAIImagesTestService(upstream)
+	repo := &fakeImageLogRepository{}
+	svc.imageLogService, _ = newTestImageLogService(t, repo)
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+
+	result, err := svc.ForwardImages(context.Background(), c, directImagesTestAccount(), body, parsed, "")
+
+	require.NoError(t, err)
+	require.Equal(t, 1, result.ImageCount)
+	require.Len(t, repo.created, 1)
+	require.Equal(t, "req_direct_stream_log", repo.created[0].RequestID)
+	require.Equal(t, imageLogSourceSub2API, repo.created[0].Source)
+	require.Equal(t, "direct stream log", repo.created[0].Prompt)
+	require.Len(t, repo.created[0].Images, 1)
+}
+
+func TestCodexDirectImagesStreamingWritesPrivateImageLogAfterUpstreamError(t *testing.T) {
+	body := []byte(`{"model":"gpt-image-2","prompt":"direct stream partial log","stream":true}`)
+	c, _ := newOpenAIImagesTestContext(t, body)
+	c.Set("api_key", &APIKey{ID: 42, User: &User{ID: 7, Email: "image-log@example.com"}})
+	pngBase64 := base64.StdEncoding.EncodeToString(testPNGBytes(t))
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header: http.Header{
+			"Content-Type": []string{"text/event-stream"},
+			"X-Request-Id": []string{"req_direct_stream_partial_log"},
+		},
+		Body: io.NopCloser(strings.NewReader(
+			"data: {\"type\":\"image_generation.completed\",\"b64_json\":\"" + pngBase64 + "\",\"output_format\":\"png\"}\n\n" + "data: {\"type\":\"error\",\"error\":{\"type\":\"server_error\",\"message\":\"upstream stopped after image\"}}\n\n",
+		)),
+	}}
+	svc := newOpenAIImagesTestService(upstream)
+	repo := &fakeImageLogRepository{}
+	svc.imageLogService, _ = newTestImageLogService(t, repo)
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+
+	result, err := svc.ForwardImages(context.Background(), c, directImagesTestAccount(), body, parsed, "")
+
+	require.Error(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, 1, result.ImageCount)
+	require.Len(t, repo.created, 1)
+	require.Equal(t, "req_direct_stream_partial_log", repo.created[0].RequestID)
+	require.Equal(t, "direct stream partial log", repo.created[0].Prompt)
+	require.Len(t, repo.created[0].Images, 1)
 }
 
 func TestCodexDirectImagesMappingBeforeRouting(t *testing.T) {
