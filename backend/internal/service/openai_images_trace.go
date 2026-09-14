@@ -327,8 +327,8 @@ func attachImageLogVerification(metadata map[string]any, images []ImageLogImage)
 		check := map[string]any{
 			"index":                image.Index,
 			"color_mode":           image.ColorMode,
-			"actual_mime_type":      image.MIMEType,
-			"actual_output_format":  imageFormatFromMIMEType(image.MIMEType),
+			"actual_mime_type":     image.MIMEType,
+			"actual_output_format": imageFormatFromMIMEType(image.MIMEType),
 			"requested_background": expectedBackground,
 		}
 		resultBackground := ""

@@ -114,8 +114,8 @@ func TestRecordOpenAIImagesStoresOriginalAlphaStats(t *testing.T) {
 	pngBase64 := base64.StdEncoding.EncodeToString(testTransparentPNGBytes(t))
 
 	err := svc.RecordOpenAIImages(context.Background(), &RecordImageLogInput{
-		User:      &User{ID: 1, Email: "user@example.com"},
-		APIKey:    &APIKey{ID: 2, Name: "image key"},
+		User:   &User{ID: 1, Email: "user@example.com"},
+		APIKey: &APIKey{ID: 2, Name: "image key"},
 		Results: []openAIResponsesImageResult{{
 			Result:       "data:image/png;base64," + pngBase64,
 			OutputFormat: "png",
@@ -139,9 +139,9 @@ func TestRecordOpenAIImagesFlagsBackgroundPixelMismatch(t *testing.T) {
 	pngBase64 := base64.StdEncoding.EncodeToString(testPNGBytes(t))
 
 	err := svc.RecordOpenAIImages(context.Background(), &RecordImageLogInput{
-		User:      &User{ID: 1},
-		APIKey:    &APIKey{ID: 2},
-		Metadata:  map[string]any{"background": "transparent"},
+		User:     &User{ID: 1},
+		APIKey:   &APIKey{ID: 2},
+		Metadata: map[string]any{"background": "transparent"},
 		Results: []openAIResponsesImageResult{{
 			Result:       "data:image/png;base64," + pngBase64,
 			OutputFormat: "png",
@@ -186,11 +186,17 @@ func TestRecordOpenAIImagesLocalizesTransparencyAfterMatchedForwarding(t *testin
 	if err != nil {
 		t.Fatalf("record image log: %v", err)
 	}
-	parameters := repo.created[0].Metadata["parameter_verification"].(map[string]any)
+	parameters, ok := repo.created[0].Metadata["parameter_verification"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected parameter verification metadata, got %#v", repo.created[0].Metadata["parameter_verification"])
+	}
 	if parameters["status"] != "matched" {
 		t.Fatalf("expected forwarding parameters to match, got %#v", parameters)
 	}
-	checks := repo.created[0].Metadata["image_verification"].([]map[string]any)
+	checks, ok := repo.created[0].Metadata["image_verification"].([]map[string]any)
+	if !ok {
+		t.Fatalf("expected image verification metadata, got %#v", repo.created[0].Metadata["image_verification"])
+	}
 	if len(checks) != 1 || checks[0]["status"] != "mismatch" || checks[0]["likely_transparency_stage"] != "upstream_generation_or_response" {
 		t.Fatalf("expected upstream transparency localization, got %#v", checks)
 	}

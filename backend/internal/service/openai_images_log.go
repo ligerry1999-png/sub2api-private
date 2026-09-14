@@ -59,9 +59,9 @@ func (s *OpenAIGatewayService) recordOpenAIImagesLog(
 		"response_format": parsed.ResponseFormat,
 		"n":               parsed.N,
 		"stream":          parsed.Stream,
-		"received":         received,
-		"effective":        effective,
-		"result":           summarizeOpenAIImagesResults(results),
+		"received":        received,
+		"effective":       effective,
+		"result":          summarizeOpenAIImagesResults(results),
 		"upstream": map[string]any{
 			"route":        source,
 			"model":        strings.TrimSpace(requestModel),
@@ -86,7 +86,7 @@ func (s *OpenAIGatewayService) recordOpenAIImagesLog(
 		DurationMs: durationMs,
 		Results:    results,
 		CreatedAt:  createdAt,
-		Metadata: metadata,
+		Metadata:   metadata,
 	}
 	for key, value := range extraMetadata {
 		key = strings.TrimSpace(key)

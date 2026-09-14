@@ -44,7 +44,7 @@
 - `image_logs.metadata` 新增 `received`、`effective`、`forwarded`/`forwarded_attempts`、`result`、`upstream`、`parameter_verification`、`image_verification`；每张原图记录真实 MIME、模式、Alpha 范围和 SHA-256。
 - 异步任务会同时记录内容工厂实际提交的 `/v1/image-jobs/...` 与内部执行的 `/v1/images/...`，避免把两个阶段混为一谈。
 - 增加原生 Images `background` 透传、Responses 回退嵌套参数、请求体读取后恢复、并发 payload 隔离、调色板 PNG 和透明阶段定位回归测试。
-- `git diff --check` 通过；本机没有 Go 工具链，`go test`/`gofmt` 未能运行，未进行生产部署或真实上游请求。
+- `git diff --check` 通过；使用临时 Go 1.27 工具链完成 `gofmt` 和新增链路的 10 组定向测试，完整测试继续由 GitHub Actions 验证；未进行真实上游请求。
 - 部署前只读检查通过：线上提交仍为 `9e468b03d3a868b2d0d983d4b995953d885db27b`，Sub2API、PostgreSQL、Redis 健康，图片任务队列空闲，磁盘和内存满足部署条件。
 
 # Sub2API v0.1.183 GitHub 发布执行
