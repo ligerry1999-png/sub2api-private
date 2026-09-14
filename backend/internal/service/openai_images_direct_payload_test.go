@@ -11,6 +11,7 @@ import (
 	"net/textproto"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -50,6 +51,102 @@ func TestCodexDirectImagesMultipartEdit(t *testing.T) {
 	require.EqualValues(t, 75, gjson.GetBytes(upstreamBody, "output_compression").Int())
 	require.EqualValues(t, 2, gjson.GetBytes(upstreamBody, "partial_images").Int())
 	require.False(t, gjson.GetBytes(upstreamBody, "tools").Exists())
+}
+
+func TestCodexDirectImagesPayloadPreservesBackground(t *testing.T) {
+	body := []byte(`{"model":"gpt-image-2","prompt":"draw","background":"opaque","quality":"high","size":"1024x1024","output_format":"png","n":1}`)
+	c, _ := newOpenAIImagesTestContext(t, body)
+	svc := newOpenAIImagesTestService(nil)
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+
+	forwarded, target, err := buildOpenAIImagesOAuthPayload(parsed, parsed.Model)
+	require.NoError(t, err)
+	require.Equal(t, "https://chatgpt.com/backend-api/codex/images/generations", target)
+	require.Equal(t, "opaque", gjson.GetBytes(forwarded, "background").String())
+	require.Equal(t, "high", gjson.GetBytes(forwarded, "quality").String())
+	require.Equal(t, "png", gjson.GetBytes(forwarded, "output_format").String())
+	require.EqualValues(t, 1, parsed.N)
+	require.False(t, gjson.GetBytes(forwarded, "n").Exists(), "n=1 may be omitted, but its effective value must stay 1")
+
+	summary := summarizeOpenAIImagesRequestBody(forwarded, "/images/generations", parsed.N)
+	require.Equal(t, "opaque", summary["background"])
+	require.Equal(t, false, summary["n_in_body"])
+	require.Equal(t, 1, summary["n_effective"])
+	require.NotEmpty(t, summary["body_sha256"])
+}
+
+func TestOpenAIImagesTraceReadsResponsesImageToolAndRestoresBody(t *testing.T) {
+	body := []byte(`{"model":"gpt-5.6-luna","stream":true,"tools":[{"type":"image_generation","model":"gpt-image-2","background":"opaque","quality":"high","size":"1024x1024","output_format":"png","n":1}]}`)
+	req, err := http.NewRequest(http.MethodPost, "https://chatgpt.com/backend-api/codex/responses", bytes.NewReader(body))
+	require.NoError(t, err)
+
+	summary, err := summarizeOpenAIImagesHTTPRequest(req, 1)
+	require.NoError(t, err)
+	require.Equal(t, "responses_image_tool", summary["payload_shape"])
+	require.Equal(t, "gpt-5.6-luna", summary["driver_model"])
+	require.Equal(t, "gpt-image-2", summary["model"])
+	require.Equal(t, "opaque", summary["background"])
+	require.Equal(t, "png", summary["output_format"])
+	require.Equal(t, 1, summary["n"])
+
+	restored, err := io.ReadAll(req.Body)
+	require.NoError(t, err)
+	require.Equal(t, body, restored)
+}
+
+func TestOpenAIImagesTraceSeparatesRawRequestFromDefaults(t *testing.T) {
+	body := []byte(`{"prompt":"draw"}`)
+	c, _ := newOpenAIImagesTestContext(t, body)
+	svc := newOpenAIImagesTestService(nil)
+	parsed, err := svc.ParseOpenAIImagesRequest(c, body)
+	require.NoError(t, err)
+
+	received := summarizeOpenAIImagesReceivedRequest(parsed)
+	effective := summarizeOpenAIImagesEffectiveRequest(parsed, parsed.Model)
+	require.NotContains(t, received, "model")
+	require.Equal(t, "gpt-image-2", effective["model"])
+	comparison := compareImageLogStages(received, effective)
+	require.Equal(t, "changed", comparison["status"])
+	require.Contains(t, comparison["defaulted_fields"], "model")
+}
+
+func TestCodexDirectImagesPayloadDoesNotShareParameters(t *testing.T) {
+	const workers = 12
+	type result struct {
+		index int
+		body  []byte
+		err   error
+	}
+	results := make(chan result, workers)
+	var group sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		group.Add(1)
+		go func(index int) {
+			defer group.Done()
+			parsed := &OpenAIImagesRequest{
+				Model:        "gpt-image-2",
+				Prompt:       "draw",
+				Background:   map[bool]string{true: "transparent", false: "opaque"}[index%2 == 0],
+				Quality:      fmt.Sprintf("quality-%d", index),
+				OutputFormat: "png",
+				N:            1,
+			}
+			body, _, err := buildOpenAIImagesOAuthPayload(parsed, parsed.Model)
+			results <- result{index: index, body: body, err: err}
+		}(i)
+	}
+	group.Wait()
+	close(results)
+	for item := range results {
+		require.NoError(t, item.err)
+		require.Equal(t, fmt.Sprintf("quality-%d", item.index), gjson.GetBytes(item.body, "quality").String())
+		wantBackground := "opaque"
+		if item.index%2 == 0 {
+			wantBackground = "transparent"
+		}
+		require.Equal(t, wantBackground, gjson.GetBytes(item.body, "background").String())
+	}
 }
 
 func TestCodexDirectImagesPricingAndUsage(t *testing.T) {

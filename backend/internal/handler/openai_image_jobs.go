@@ -371,6 +371,7 @@ func (h *OpenAIGatewayHandler) createImageJob(c *gin.Context, endpoint string) {
 	header.Set("Content-Type", c.GetHeader("Content-Type"))
 	preserveImageJobForwardedBaseHeaders(c, header)
 	header.Set("X-Sub2API-Image-Job-ID", job.ID)
+	header.Set("X-Sub2API-Image-Job-Submit-Endpoint", c.Request.URL.Path)
 	if requestID := strings.TrimSpace(c.GetHeader("X-Request-Id")); requestID != "" {
 		header.Set("X-Request-Id", requestID)
 	}
@@ -1370,7 +1371,7 @@ func sanitizePersistedImageJobHeaders(src http.Header) http.Header {
 	dst := make(http.Header)
 	for key, values := range src {
 		switch http.CanonicalHeaderKey(key) {
-		case "Accept", "Content-Type", "User-Agent", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Real-Ip", "Cf-Connecting-Ip", "X-Request-Id", "X-Image-Result-Delivery", "X-Sub2api-Image-Job-Id":
+		case "Accept", "Content-Type", "User-Agent", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Real-Ip", "Cf-Connecting-Ip", "X-Request-Id", "X-Image-Result-Delivery", "X-Sub2api-Image-Job-Id", "X-Sub2api-Image-Job-Submit-Endpoint":
 			for _, value := range values {
 				if strings.TrimSpace(value) != "" {
 					dst.Add(key, value)

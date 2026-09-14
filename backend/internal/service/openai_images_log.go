@@ -43,6 +43,36 @@ func (s *OpenAIGatewayService) recordOpenAIImagesLog(
 		durationMs = 0
 	}
 	createdAt := time.Now()
+	received := summarizeOpenAIImagesReceivedRequest(parsed)
+	if submitEndpoint := safeImageJobSubmitEndpoint(c); submitEndpoint != "" {
+		received["execution_endpoint"] = received["endpoint"]
+		received["endpoint"] = submitEndpoint
+	}
+	effective := summarizeOpenAIImagesEffectiveRequest(parsed, requestModel)
+	metadata := map[string]any{
+		// Keep the flat fields for existing admin consumers and add structured
+		// snapshots for comparing the gateway stages without storing the body.
+		"size":            parsed.Size,
+		"quality":         parsed.Quality,
+		"background":      parsed.Background,
+		"output_format":   parsed.OutputFormat,
+		"response_format": parsed.ResponseFormat,
+		"n":               parsed.N,
+		"stream":          parsed.Stream,
+		"received":         received,
+		"effective":        effective,
+		"result":           summarizeOpenAIImagesResults(results),
+		"upstream": map[string]any{
+			"route":        source,
+			"model":        strings.TrimSpace(requestModel),
+			"platform":     strings.TrimSpace(account.Platform),
+			"account_type": strings.TrimSpace(account.Type),
+			"account_id":   account.ID,
+		},
+	}
+	if jobID := safeImageJobID(c); jobID != "" {
+		metadata["image_job_id"] = jobID
+	}
 	input := &RecordImageLogInput{
 		User:       apiKey.User,
 		APIKey:     apiKey,
@@ -56,14 +86,7 @@ func (s *OpenAIGatewayService) recordOpenAIImagesLog(
 		DurationMs: durationMs,
 		Results:    results,
 		CreatedAt:  createdAt,
-		Metadata: map[string]any{
-			"size":            parsed.Size,
-			"quality":         parsed.Quality,
-			"background":      parsed.Background,
-			"response_format": parsed.ResponseFormat,
-			"n":               parsed.N,
-			"stream":          parsed.Stream,
-		},
+		Metadata: metadata,
 	}
 	for key, value := range extraMetadata {
 		key = strings.TrimSpace(key)

@@ -54,8 +54,10 @@ func TestCodexDirectImagesRouting(t *testing.T) {
 }
 
 func TestCodexDirectImagesNonStreamingWritesPrivateImageLog(t *testing.T) {
-	body := []byte(`{"model":"gpt-image-2","prompt":"direct non-stream log","response_format":"b64_json"}`)
+	body := []byte(`{"model":"gpt-image-2","prompt":"direct non-stream log","background":"opaque","quality":"high","size":"1024x1024","output_format":"png","response_format":"b64_json","n":1}`)
 	c, _ := newOpenAIImagesTestContext(t, body)
+	c.Request.Header.Set("X-Sub2API-Image-Job-ID", "imgjob_trace_001")
+	c.Request.Header.Set("X-Sub2API-Image-Job-Submit-Endpoint", "/v1/image-jobs/images/generations")
 	c.Set("api_key", &APIKey{ID: 42, User: &User{ID: 7, Email: "image-log@example.com"}})
 	pngBase64 := base64.StdEncoding.EncodeToString(testPNGBytes(t))
 	upstream := &httpUpstreamRecorder{resp: &http.Response{
@@ -81,6 +83,29 @@ func TestCodexDirectImagesNonStreamingWritesPrivateImageLog(t *testing.T) {
 	require.Equal(t, imageLogSourceSub2API, repo.created[0].Source)
 	require.Equal(t, "direct non-stream log", repo.created[0].Prompt)
 	require.Len(t, repo.created[0].Images, 1)
+	received, ok := repo.created[0].Metadata["received"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "/v1/image-jobs/images/generations", received["endpoint"])
+	require.Equal(t, "/v1/images/generations", received["execution_endpoint"])
+	require.Equal(t, "opaque", received["background"])
+	require.Equal(t, "png", received["output_format"])
+	require.Equal(t, 1, received["n"])
+	require.NotEmpty(t, received["body_sha256"])
+	require.Equal(t, "imgjob_trace_001", repo.created[0].Metadata["image_job_id"])
+	forwarded, ok := repo.created[0].Metadata["forwarded"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "opaque", forwarded["background"])
+	require.Equal(t, "png", forwarded["output_format"])
+	require.Equal(t, false, forwarded["n_in_body"])
+	require.Equal(t, 1, forwarded["n_effective"])
+	require.NotEmpty(t, forwarded["body_sha256"])
+	parameterVerification, ok := repo.created[0].Metadata["parameter_verification"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "matched", parameterVerification["status"])
+	imageVerification, ok := repo.created[0].Metadata["image_verification"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, imageVerification, 1)
+	require.Equal(t, "matched", imageVerification[0]["status"])
 }
 
 func TestCodexDirectImagesStreamingWritesPrivateImageLog(t *testing.T) {

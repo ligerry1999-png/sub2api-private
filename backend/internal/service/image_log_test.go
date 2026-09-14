@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"image/png"
 	"os"
 	"path/filepath"
@@ -36,6 +37,163 @@ func testPNGBytes(t *testing.T) []byte {
 		t.Fatalf("encode png: %v", err)
 	}
 	return buf.Bytes()
+}
+
+func testTransparentPNGBytes(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 2, 1))
+	img.Set(0, 0, color.RGBA{R: 200, G: 40, B: 80, A: 0})
+	img.Set(1, 0, color.RGBA{R: 200, G: 40, B: 80, A: 128})
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode transparent png: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func testJPEGBytes(t *testing.T) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, 2, 1))
+	for x := 0; x < 2; x++ {
+		img.Set(x, 0, color.RGBA{R: 200, G: 40, B: 80, A: 255})
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatalf("encode jpeg: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func testPalettedTransparentPNGBytes(t *testing.T) []byte {
+	t.Helper()
+	palette := color.Palette{
+		color.NRGBA{R: 10, G: 20, B: 30, A: 255},
+		color.NRGBA{R: 40, G: 50, B: 60, A: 64},
+	}
+	img := image.NewPaletted(image.Rect(0, 0, 2, 1), palette)
+	img.SetColorIndex(0, 0, 0)
+	img.SetColorIndex(1, 0, 1)
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode paletted png: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func TestInspectImageAlphaDistinguishesTransparentPNGAndJPEG(t *testing.T) {
+	transparent, err := inspectImageAlpha(testTransparentPNGBytes(t))
+	if err != nil {
+		t.Fatalf("inspect transparent png: %v", err)
+	}
+	if transparent.ColorMode != "RGBA" || !transparent.HasAlpha || transparent.AlphaMin == nil || *transparent.AlphaMin != 0 || transparent.AlphaMax == nil || *transparent.AlphaMax != 128 || !transparent.HasAlphaZero || !transparent.HasPartialAlpha {
+		t.Fatalf("unexpected transparent png stats: %+v", transparent)
+	}
+
+	opaque, err := inspectImageAlpha(testJPEGBytes(t))
+	if err != nil {
+		t.Fatalf("inspect jpeg: %v", err)
+	}
+	if opaque.ColorMode != "RGB" || opaque.HasAlpha || opaque.AlphaMin != nil || opaque.AlphaMax != nil || opaque.HasAlphaZero || opaque.HasPartialAlpha {
+		t.Fatalf("unexpected jpeg stats: %+v", opaque)
+	}
+}
+
+func TestInspectImageAlphaRecognizesPalettedPNGTransparency(t *testing.T) {
+	stats, err := inspectImageAlpha(testPalettedTransparentPNGBytes(t))
+	if err != nil {
+		t.Fatalf("inspect paletted png: %v", err)
+	}
+	if stats.ColorMode != "RGBA" || !stats.HasAlpha || stats.AlphaMin == nil || *stats.AlphaMin != 64 || stats.AlphaMax == nil || *stats.AlphaMax != 255 || !stats.HasPartialAlpha {
+		t.Fatalf("unexpected paletted png stats: %+v", stats)
+	}
+}
+
+func TestRecordOpenAIImagesStoresOriginalAlphaStats(t *testing.T) {
+	repo := &fakeImageLogRepository{}
+	svc, _ := newTestImageLogService(t, repo)
+	pngBase64 := base64.StdEncoding.EncodeToString(testTransparentPNGBytes(t))
+
+	err := svc.RecordOpenAIImages(context.Background(), &RecordImageLogInput{
+		User:      &User{ID: 1, Email: "user@example.com"},
+		APIKey:    &APIKey{ID: 2, Name: "image key"},
+		Results: []openAIResponsesImageResult{{
+			Result:       "data:image/png;base64," + pngBase64,
+			OutputFormat: "png",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("record image log: %v", err)
+	}
+	if len(repo.created) != 1 || len(repo.created[0].Images) != 1 {
+		t.Fatalf("expected one recorded image, got %#v", repo.created)
+	}
+	img := repo.created[0].Images[0]
+	if img.ColorMode != "RGBA" || img.HasAlpha == nil || !*img.HasAlpha || img.AlphaMin == nil || *img.AlphaMin != 0 || img.AlphaMax == nil || *img.AlphaMax != 128 || !img.HasAlphaZero || !img.HasPartial || img.SHA256 == "" {
+		t.Fatalf("unexpected stored alpha stats: %+v", img)
+	}
+}
+
+func TestRecordOpenAIImagesFlagsBackgroundPixelMismatch(t *testing.T) {
+	repo := &fakeImageLogRepository{}
+	svc, _ := newTestImageLogService(t, repo)
+	pngBase64 := base64.StdEncoding.EncodeToString(testPNGBytes(t))
+
+	err := svc.RecordOpenAIImages(context.Background(), &RecordImageLogInput{
+		User:      &User{ID: 1},
+		APIKey:    &APIKey{ID: 2},
+		Metadata:  map[string]any{"background": "transparent"},
+		Results: []openAIResponsesImageResult{{
+			Result:       "data:image/png;base64," + pngBase64,
+			OutputFormat: "png",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("record image log: %v", err)
+	}
+	checks, ok := repo.created[0].Metadata["image_verification"].([]map[string]any)
+	if !ok || len(checks) != 1 || checks[0]["status"] != "mismatch" {
+		t.Fatalf("expected transparent background mismatch, got %#v", repo.created[0].Metadata["image_verification"])
+	}
+}
+
+func TestRecordOpenAIImagesLocalizesTransparencyAfterMatchedForwarding(t *testing.T) {
+	repo := &fakeImageLogRepository{}
+	svc, _ := newTestImageLogService(t, repo)
+	pngBase64 := base64.StdEncoding.EncodeToString(testTransparentPNGBytes(t))
+	metadata := map[string]any{
+		"background": "opaque",
+		"effective": map[string]any{
+			"model": "gpt-image-2", "background": "opaque", "output_format": "png", "n_effective": 1,
+		},
+		"forwarded": map[string]any{
+			"model": "gpt-image-2", "background": "opaque", "output_format": "png", "n_effective": 1,
+		},
+		"result": []map[string]any{{
+			"index": 0, "background": "transparent", "output_format": "png",
+		}},
+	}
+
+	err := svc.RecordOpenAIImages(context.Background(), &RecordImageLogInput{
+		User:     &User{ID: 1},
+		APIKey:   &APIKey{ID: 2},
+		Metadata: metadata,
+		Results: []openAIResponsesImageResult{{
+			Result:       "data:image/png;base64," + pngBase64,
+			Background:   "transparent",
+			OutputFormat: "png",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("record image log: %v", err)
+	}
+	parameters := repo.created[0].Metadata["parameter_verification"].(map[string]any)
+	if parameters["status"] != "matched" {
+		t.Fatalf("expected forwarding parameters to match, got %#v", parameters)
+	}
+	checks := repo.created[0].Metadata["image_verification"].([]map[string]any)
+	if len(checks) != 1 || checks[0]["status"] != "mismatch" || checks[0]["likely_transparency_stage"] != "upstream_generation_or_response" {
+		t.Fatalf("expected upstream transparency localization, got %#v", checks)
+	}
 }
 
 func TestRecordOpenAIImagesAcceptsDataURLAndCreatesThumbnail(t *testing.T) {

@@ -39,6 +39,13 @@ type ImageLogImage struct {
 	SizeBytes     int64  `json:"size_bytes"`
 	Width         int    `json:"width,omitempty"`
 	Height        int    `json:"height,omitempty"`
+	SHA256        string `json:"sha256,omitempty"`
+	ColorMode     string `json:"color_mode,omitempty"`
+	HasAlpha      *bool  `json:"has_alpha,omitempty"`
+	AlphaMin      *int   `json:"alpha_min,omitempty"`
+	AlphaMax      *int   `json:"alpha_max,omitempty"`
+	HasAlphaZero  bool   `json:"has_alpha_zero,omitempty"`
+	HasPartial    bool   `json:"has_partial_alpha,omitempty"`
 }
 
 type ImageLog struct {
@@ -149,6 +156,7 @@ func (s *ImageLogService) RecordOpenAIImages(ctx context.Context, input *RecordI
 	if len(images) == 0 {
 		return nil
 	}
+	attachImageLogVerification(input.Metadata, images)
 
 	var accountID *int64
 	if input.Account != nil && input.Account.ID > 0 {
@@ -300,6 +308,11 @@ func (s *ImageLogService) saveImageResults(createdAt time.Time, results []openAI
 			logger.LegacyPrintf("service.image_log", "[ImageLog] skip undecodable image payload index=%d err=%v", i, err)
 			continue
 		}
+		alphaStats, err := inspectImageAlpha(raw)
+		if err != nil {
+			logger.LegacyPrintf("service.image_log", "[ImageLog] skip image alpha inspection index=%d err=%v", i, err)
+			continue
+		}
 		ext := imageLogExtension(mimeType)
 		name := fmt.Sprintf("%s_%02d%s", batchID, i, ext)
 		relPath := filepath.ToSlash(filepath.Join(dayPrefix, name))
@@ -327,6 +340,13 @@ func (s *ImageLogService) saveImageResults(createdAt time.Time, results []openAI
 			SizeBytes:     int64(len(raw)),
 			Width:         width,
 			Height:        height,
+			SHA256:        sha256Hex(raw),
+			ColorMode:     alphaStats.ColorMode,
+			HasAlpha:      imageTraceBoolPtr(alphaStats.HasAlpha),
+			AlphaMin:      alphaStats.AlphaMin,
+			AlphaMax:      alphaStats.AlphaMax,
+			HasAlphaZero:  alphaStats.HasAlphaZero,
+			HasPartial:    alphaStats.HasPartialAlpha,
 		}
 		images = append(images, logImage)
 	}

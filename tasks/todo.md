@@ -21,6 +21,32 @@
 
 ---
 
+# 生图链路可验证性修复（2026-09-14）
+
+> 目标：在不保存 Key、Cookie、Authorization 或完整提示词的前提下，关联异步 image job 的入站参数、实际出站 payload 摘要、上游结果元数据和原始图片 Alpha 检查结果。
+
+- [x] 为图片日志补充安全的入站/出站摘要、任务关联和哈希
+- [x] 对原始图片记录真实 MIME、模式、Alpha 范围和透明像素标记
+- [x] 增加 background/output_format 透传、结果检查和并发隔离测试
+- [x] 区分异步提交接口与内部执行接口，并记录实际命中的上游账号类型/模型
+- [x] 支持原生 Images 回退 Responses 时记录每次出站参数，识别嵌套 image_generation 工具字段
+- [x] 补充调色板 PNG 透明通道识别和“入站/出站一致但结果透明”的阶段定位
+- [x] 运行差异检查和可用的静态检查；记录 Go 工具链缺失或残余风险
+- [ ] 提交候选代码并将同一精确提交推送到私有 GitHub `main`
+- [ ] 等待该提交的 CI、安全扫描和生产数据库隔离演练全部通过
+- [x] 部署前只读确认生产图片任务空闲、容器健康和资源充足
+- [ ] 仅通过 GitHub Actions `Deploy Server / deploy=true` 正式部署
+- [ ] 部署后核对线上提交、镜像、健康状态、重启次数和私有路由
+
+## Review
+
+- 已在 `openai_images_trace.go` 增加入站/生效/出站字段白名单、请求体 SHA-256、image job ID、结果元数据和原图 Alpha 统计；原图不重新编码。
+- `image_logs.metadata` 新增 `received`、`effective`、`forwarded`/`forwarded_attempts`、`result`、`upstream`、`parameter_verification`、`image_verification`；每张原图记录真实 MIME、模式、Alpha 范围和 SHA-256。
+- 异步任务会同时记录内容工厂实际提交的 `/v1/image-jobs/...` 与内部执行的 `/v1/images/...`，避免把两个阶段混为一谈。
+- 增加原生 Images `background` 透传、Responses 回退嵌套参数、请求体读取后恢复、并发 payload 隔离、调色板 PNG 和透明阶段定位回归测试。
+- `git diff --check` 通过；本机没有 Go 工具链，`go test`/`gofmt` 未能运行，未进行生产部署或真实上游请求。
+- 部署前只读检查通过：线上提交仍为 `9e468b03d3a868b2d0d983d4b995953d885db27b`，Sub2API、PostgreSQL、Redis 健康，图片任务队列空闲，磁盘和内存满足部署条件。
+
 # Sub2API v0.1.183 GitHub 发布执行
 
 > 发布原则：只在 GitHub Runner 构建镜像；生产服务器只备份数据库、加载预构建镜像并使用 `--no-build` 重启，不在服务器编译源码。

@@ -1566,6 +1566,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthNonStreamingResponse(
 	fallbackModel string,
 	startTime time.Time,
 	nativeStartTime time.Time,
+	extraMetadata ...map[string]any,
 ) (OpenAIUsage, int, []string, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
@@ -1627,6 +1628,15 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthNonStreamingResponse(
 		}
 		if !nativeStartTime.IsZero() {
 			metadata["native_duration_ms"] = time.Since(nativeStartTime).Milliseconds()
+		}
+		for _, extra := range extraMetadata {
+			for key, value := range extra {
+				key = strings.TrimSpace(key)
+				if key == "" {
+					continue
+				}
+				metadata[key] = value
+			}
 		}
 		s.recordOpenAIImagesLog(c.Request.Context(), c, account, parsed, fallbackModel, imageLogSourceSub2API, resp.Header.Get("x-request-id"), startTime, results, metadata)
 	}
@@ -2132,13 +2142,35 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 	} else {
 		upstreamReq.Header.Set("OpenAI-Beta", "responses=experimental")
 	}
+	nativeStart := time.Now()
+	forwardedAttempts := make([]map[string]any, 0, 2)
+	recordForwardedAttempt := func(req *http.Request) {
+		summary, summaryErr := summarizeOpenAIImagesHTTPRequest(req, parsed.N)
+		if summaryErr != nil {
+			logger.LegacyPrintf("service.openai_gateway", "[OpenAI] image request trace snapshot failed endpoint=%s err=%v", requestPath(req), summaryErr)
+			return
+		}
+		forwardedAttempts = append(forwardedAttempts, summary)
+	}
+	imageLogMetadata := func() map[string]any {
+		metadata := map[string]any{
+			"route":              imageLogSourceSub2API,
+			"native_duration_ms": time.Since(nativeStart).Milliseconds(),
+		}
+		if len(forwardedAttempts) == 1 {
+			metadata["forwarded"] = forwardedAttempts[0]
+		} else if len(forwardedAttempts) > 1 {
+			metadata["forwarded_attempts"] = forwardedAttempts
+		}
+		return metadata
+	}
 
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
-	upstreamStart := time.Now()
-	nativeStart := upstreamStart
+	upstreamStart := nativeStart
+	recordForwardedAttempt(upstreamReq)
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
 	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 	if err != nil {
@@ -2167,10 +2199,12 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 				compatReq.Header.Set("Content-Type", "application/json")
 				compatReq.Header.Set("Accept", "text/event-stream")
 				compatReq.Header.Set("OpenAI-Beta", "responses=experimental")
+				recordForwardedAttempt(compatReq)
 				if compatResp, compatRequestErr := s.doOpenAIUpstream(compatReq, proxyURL, account); compatRequestErr == nil && compatResp != nil {
 					_ = resp.Body.Close()
 					resp = compatResp
 					direct = false
+					upstreamReq = compatReq
 				}
 			}
 		}
@@ -2183,9 +2217,11 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 				compatReq.Header.Set("Content-Type", "application/json")
 				compatReq.Header.Set("Accept", "text/event-stream")
 				compatReq.Header.Set("OpenAI-Beta", "responses=experimental")
+				recordForwardedAttempt(compatReq)
 				if compatResp, compatRequestErr := s.doOpenAIUpstream(compatReq, proxyURL, account); compatRequestErr == nil && compatResp != nil {
 					_ = resp.Body.Close()
 					resp = compatResp
+					upstreamReq = compatReq
 				}
 			}
 		}
@@ -2252,10 +2288,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 			usage, imageCount, imageOutputSizes, firstTokenMs, err = s.handleOpenAIImagesOAuthStreamingResponse(resp, c, startTime, parsed.ResponseFormat, openAIImagesStreamPrefix(parsed), upstreamModel)
 		}
 		if direct && len(directResults) > 0 {
-			s.recordOpenAIImagesLog(upstreamCtx, c, account, parsed, upstreamModel, imageLogSourceSub2API, resp.Header.Get("x-request-id"), startTime, directResults, map[string]any{
-				"route":              imageLogSourceSub2API,
-				"native_duration_ms": time.Since(nativeStart).Milliseconds(),
-			})
+			s.recordOpenAIImagesLog(upstreamCtx, c, account, parsed, upstreamModel, imageLogSourceSub2API, resp.Header.Get("x-request-id"), startTime, directResults, imageLogMetadata())
 		}
 		if err != nil {
 			if imageCount > 0 {
@@ -2293,13 +2326,10 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		if direct {
 			usage, imageCount, imageOutputSizes, err = s.handleCodexDirectImagesNonStreamingResponse(resp, c, parsed, &directResults)
 		} else {
-			usage, imageCount, imageOutputSizes, err = s.handleOpenAIImagesOAuthNonStreamingResponse(resp, c, account, parsed, parsed.ResponseFormat, upstreamModel, startTime, nativeStart)
+			usage, imageCount, imageOutputSizes, err = s.handleOpenAIImagesOAuthNonStreamingResponse(resp, c, account, parsed, parsed.ResponseFormat, upstreamModel, startTime, nativeStart, imageLogMetadata())
 		}
 		if direct && len(directResults) > 0 {
-			s.recordOpenAIImagesLog(upstreamCtx, c, account, parsed, upstreamModel, imageLogSourceSub2API, resp.Header.Get("x-request-id"), startTime, directResults, map[string]any{
-				"route":              imageLogSourceSub2API,
-				"native_duration_ms": time.Since(nativeStart).Milliseconds(),
-			})
+			s.recordOpenAIImagesLog(upstreamCtx, c, account, parsed, upstreamModel, imageLogSourceSub2API, resp.Header.Get("x-request-id"), startTime, directResults, imageLogMetadata())
 		}
 		if err != nil {
 			return nil, s.handleOpenAIImagesOAuthResponseError(
