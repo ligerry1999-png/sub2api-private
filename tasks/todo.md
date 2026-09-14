@@ -32,11 +32,11 @@
 - [x] 支持原生 Images 回退 Responses 时记录每次出站参数，识别嵌套 image_generation 工具字段
 - [x] 补充调色板 PNG 透明通道识别和“入站/出站一致但结果透明”的阶段定位
 - [x] 运行差异检查和可用的静态检查；记录 Go 工具链缺失或残余风险
-- [ ] 提交候选代码并将同一精确提交推送到私有 GitHub `main`
-- [ ] 等待该提交的 CI、安全扫描和生产数据库隔离演练全部通过
+- [x] 提交候选代码并将同一精确提交推送到私有 GitHub `main`
+- [x] 等待该提交的 CI、安全扫描和生产数据库隔离演练全部通过
 - [x] 部署前只读确认生产图片任务空闲、容器健康和资源充足
-- [ ] 仅通过 GitHub Actions `Deploy Server / deploy=true` 正式部署
-- [ ] 部署后核对线上提交、镜像、健康状态、重启次数和私有路由
+- [x] 仅通过 GitHub Actions `Deploy Server / deploy=true` 正式部署
+- [x] 部署后核对线上提交、镜像、健康状态、重启次数和私有路由
 
 ## Review
 
@@ -45,7 +45,10 @@
 - 异步任务会同时记录内容工厂实际提交的 `/v1/image-jobs/...` 与内部执行的 `/v1/images/...`，避免把两个阶段混为一谈。
 - 增加原生 Images `background` 透传、Responses 回退嵌套参数、请求体读取后恢复、并发 payload 隔离、调色板 PNG 和透明阶段定位回归测试。
 - `git diff --check` 通过；使用临时 Go 1.27 工具链完成 `gofmt` 和新增链路的 10 组定向测试，完整测试继续由 GitHub Actions 验证；未进行真实上游请求。
-- 部署前只读检查通过：线上提交仍为 `9e468b03d3a868b2d0d983d4b995953d885db27b`，Sub2API、PostgreSQL、Redis 健康，图片任务队列空闲，磁盘和内存满足部署条件。
+- 部署前只读检查通过：线上提交为 `9e468b03d3a868b2d0d983d4b995953d885db27b`，Sub2API、PostgreSQL、Redis 健康，图片任务队列空闲，磁盘和内存满足部署条件。
+- 精确候选提交 `efe2fd2bd2e4d0502980fc0a0262f78b75e49c2e` 已推送到私有 `main`；CI `34851429130`、Security Scan `34851429183`、Database Rehearsal `34851472941` 全部成功。
+- Deploy Server `34853879480` 成功；GitHub Runner 构建并上传镜像，生产服务器使用 `docker compose --no-build` 加载部署。
+- 上线后核验通过：镜像、release 文件、镜像 revision 和二进制 commit 均为 `efe2fd2bd2e4d0502980fc0a0262f78b75e49c2e`；版本 `0.2.4-private.1`，Sub2API/PostgreSQL/Redis healthy，重启次数 0，`/health` 正常，Nginx 配置检查通过，私有 image-jobs 与 `/v1/responses` 未认证探针均为 401，图片任务 `running=0/pending=0`。
 
 # Sub2API v0.1.183 GitHub 发布执行
 
