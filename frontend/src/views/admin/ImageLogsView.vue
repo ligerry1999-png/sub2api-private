@@ -234,7 +234,11 @@ const filters = reactive({
 const sourceOptions = [
   { label: '全部通道', value: '' },
   { label: 'ChatGPT2API', value: 'chatgpt2api_worker' },
-  { label: 'Sub2API 兜底', value: 'sub2api_native' }
+  { label: 'Sub2API 兜底', value: 'sub2api_native' },
+  { label: 'OpenAI API Key', value: 'openai_api_key' },
+  { label: 'Grok 生图', value: 'grok_media' },
+  { label: 'Responses 生图', value: 'sub2api_responses' },
+  { label: 'Responses WS 生图', value: 'sub2api_responses_ws' }
 ]
 
 const formatLocalDate = (date: Date) => {
@@ -250,6 +254,10 @@ const endDate = ref(formatLocalDate(new Date()))
 const sourceLabel = (source: string) => {
   if (source === 'chatgpt2api_worker') return 'ChatGPT2API'
   if (source === 'sub2api_native') return 'Sub2API 兜底'
+  if (source === 'openai_api_key') return 'OpenAI API Key'
+  if (source === 'grok_media') return 'Grok 生图'
+  if (source === 'sub2api_responses') return 'Responses 生图'
+  if (source === 'sub2api_responses_ws') return 'Responses WS 生图'
   return source || '未知通道'
 }
 

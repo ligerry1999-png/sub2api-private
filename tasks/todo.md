@@ -9,10 +9,33 @@
 - [x] 恢复并核对私人支付、异步 image-jobs、图片日志、ChatGPT2API 和 Tanzhongyu 部署文件
 - [x] 将 OAuth 图片 worker、图片 429、图片能力丢失和图片模型 404 冷却统一限制为最多 45 秒
 - [x] 迁移旧 `ModelsListConfig` 引用到官方 `ModelAllowlist`，保留旧类型兼容层
-- [ ] 本地轻量检查、前端检查和私有护栏通过
+- [x] 本地轻量检查、前端检查和私有护栏通过
 - [ ] 推送私有仓库并等待精确 SHA 的 CI、安全扫描、数据库演练通过
 - [ ] 仅通过 GitHub Actions `deploy=true` 部署，服务器不构建
 - [ ] 上线后核对版本、健康状态、私人路由、支付、队列和图片冷却
+
+---
+
+# 全渠道生图日志覆盖与私有升级护栏（2026-09-15）
+
+> 目标：让所有成功的图片生成入口都进入统一的 `image_logs`，并确保后续同步官方版本时不会删掉私有图片日志能力。
+
+- [x] 审计 OpenAI Images、Responses image_generation、Grok 图片和异步入口的日志覆盖范围
+- [x] 统一记录用户、API Key、分组、上游账号、平台和来源
+- [x] 为遗漏入口补充图片日志写入与回归测试
+- [x] 增加私有升级护栏，锁定图片日志表、路由、记录器和入口调用点
+- [x] 运行 Go 定向测试、前端检查、差异检查和私有护栏检查
+- [ ] 提交、推送并等待 CI、安全扫描、数据库演练通过
+- [ ] 仅通过 GitHub Actions 部署，并核对线上版本和新入口
+
+## Review
+
+- 已确认历史记录缺失的根因是部分入口只记录用量，没有写入 `image_logs`；后台查询默认没有旧账号白名单过滤。
+- 已统一覆盖 OpenAI API Key Images、OAuth/SetupToken Images、Responses `image_generation`（普通 HTTP、SSE、透传、WebSocket）以及 Grok 图片生成/编辑；异步 image-jobs 继续由最终 Images 请求只记录一次，避免重复。
+- `ImageLogResult` 统一承载 Base64、data URL 和远程 HTTPS URL；远程 URL 使用已有公共主机校验和大小/MIME 校验，下载失败只跳过该图片，不影响已经返回的生图请求。
+- 日志关联信息从当前认证 API Key 和实际路由账号读取，因此新账号、新分组、新渠道无需登记白名单即可显示；来源筛选同步补充到管理后台。
+- `scripts/check-private-upgrade-guards.sh`、私有升级迁移图和升级记录已锁定类型、记录器、入口调用点与 WebSocket 结果收集，后续同步官方版本时门禁会阻止私有生图日志能力被静默删除。
+- 本地已通过 Go 1.27 定向测试（`internal/service`、`internal/handler`）和新增图片日志提取测试；前端与完整 CI 仍需继续执行。
 
 ## Review
 

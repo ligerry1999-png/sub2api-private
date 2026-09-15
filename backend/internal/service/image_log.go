@@ -24,9 +24,12 @@ import (
 )
 
 const (
-	imageLogSourceChatGPT2API = "chatgpt2api_worker"
-	imageLogSourceSub2API     = "sub2api_native"
-	imageLogStatusSuccess     = "success"
+	imageLogSourceChatGPT2API  = "chatgpt2api_worker"
+	imageLogSourceSub2API      = "sub2api_native"
+	imageLogSourceOpenAIAPIKey = "openai_api_key"
+	imageLogSourceGrokMedia    = "grok_media"
+	imageLogSourceResponses    = "sub2api_responses"
+	imageLogStatusSuccess      = "success"
 
 	imageLogThumbMaxSide = 360
 )
@@ -106,7 +109,7 @@ type RecordImageLogInput struct {
 	Prompt       string
 	ImageSize    string
 	DurationMs   int
-	Results      []openAIResponsesImageResult
+	Results      []ImageLogResult
 	CreatedAt    time.Time
 	Metadata     map[string]any
 	ErrorMessage *string

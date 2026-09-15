@@ -32,6 +32,7 @@ type openaiStreamingResult struct {
 	responseID       string
 	imageCount       int
 	imageOutputSizes []string
+	imageResults     []ImageLogResult
 	searchCount      int
 }
 
@@ -41,6 +42,7 @@ type openaiNonStreamingResult struct {
 	responseID       string
 	imageCount       int
 	imageOutputSizes []string
+	imageResults     []ImageLogResult
 	searchCount      int
 }
 
@@ -352,6 +354,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 			responseID:       responseID,
 			imageCount:       imageCounter.Count(),
 			imageOutputSizes: imageCounter.Sizes(),
+			imageResults:     imageLogResultsFromRawItems(streamImageOutputs),
 			searchCount:      searchCounter,
 		}
 	}
@@ -620,9 +623,7 @@ func (s *OpenAIGatewayService) handleStreamingResponseWithReasoning(ctx context.
 				line = "data: " + data
 				eventType = effectiveOpenAISSEEventType(dataBytes, eventType)
 			}
-			if imageOutput, ok := extractImageGenerationOutputFromSSEData(dataBytes, streamSeenImages); ok {
-				streamImageOutputs = append(streamImageOutputs, imageOutput)
-			}
+			streamImageOutputs = append(streamImageOutputs, extractImageGenerationOutputsFromSSEData(dataBytes, streamSeenImages)...)
 			streamDoneItems.Observe(dataBytes)
 			if responsesStreamEventMayContributeToOutput(eventType) {
 				var streamEvent apicompat.ResponsesStreamEvent
@@ -1660,6 +1661,7 @@ func (s *OpenAIGatewayService) handleNonStreamingResponse(ctx context.Context, r
 		responseID:       extractOpenAIResponseIDFromJSONBytes(body),
 		imageCount:       countOpenAIResponseImageOutputsFromJSONBytes(body),
 		imageOutputSizes: collectOpenAIResponseImageOutputSizesFromJSONBytes(body),
+		imageResults:     extractOpenAIImageLogResultsFromResponsesJSONBytes(body),
 		searchCount:      countGrokNativeSearchCallsFromJSONBytes(body),
 	}, nil
 }
@@ -1767,6 +1769,7 @@ func (s *OpenAIGatewayService) handleSSEToJSON(resp *http.Response, c *gin.Conte
 		responseID:       extractOpenAIResponseIDFromJSONBytes(body),
 		imageCount:       countOpenAIImageOutputsFromSSEBody(bodyText),
 		imageOutputSizes: collectOpenAIImageOutputSizesFromSSEBody(bodyText),
+		imageResults:     extractOpenAIImageLogResultsFromResponsesSSEBody(bodyText),
 		searchCount:      countGrokNativeSearchCallsFromSSEBody(bodyText),
 	}, nil
 }
@@ -2283,9 +2286,7 @@ func reconstructResponseOutputFromSSE(bodyText string) ([]byte, bool) {
 	seenImages := make(map[string]struct{})
 	forEachOpenAISSEFrame(bodyText, func(eventType string, data []byte) {
 		data = []byte(openAICompatPayloadWithEventType(string(data), eventType))
-		if imageOutput, ok := extractImageGenerationOutputFromSSEData(data, seenImages); ok {
-			imageOutputs = append(imageOutputs, imageOutput)
-		}
+		imageOutputs = append(imageOutputs, extractImageGenerationOutputsFromSSEData(data, seenImages)...)
 		if responsesStreamEventMayContributeToOutput(eventType) {
 			var event apicompat.ResponsesStreamEvent
 			if err := json.Unmarshal(data, &event); err == nil {
@@ -2320,30 +2321,117 @@ func buildResponsesOutputJSON(acc *apicompat.BufferedResponseAccumulator, imageO
 }
 
 func extractImageGenerationOutputFromSSEData(data []byte, seen map[string]struct{}) (json.RawMessage, bool) {
+	outputs := extractImageGenerationOutputsFromSSEData(data, seen)
+	if len(outputs) == 0 {
+		return nil, false
+	}
+	return outputs[0], true
+}
+
+// extractImageGenerationOutputsFromSSEData accepts both per-item terminal
+// events and response.completed/response.done events. Some compatible
+// upstreams omit response.output_item.done and only include the final output
+// array, which must still be available to the private image log.
+func extractImageGenerationOutputsFromSSEData(data []byte, seen map[string]struct{}) []json.RawMessage {
 	if len(data) == 0 || !gjson.ValidBytes(data) {
-		return nil, false
+		return nil
 	}
-	if gjson.GetBytes(data, "type").String() != "response.output_item.done" {
-		return nil, false
-	}
-	item := gjson.GetBytes(data, "item")
-	if !item.Exists() || !item.IsObject() || item.Get("type").String() != "image_generation_call" {
-		return nil, false
-	}
-	if strings.TrimSpace(item.Get("result").String()) == "" {
-		return nil, false
-	}
-	key := strings.TrimSpace(item.Get("id").String())
-	if key == "" {
-		key = strings.TrimSpace(item.Get("output_format").String()) + "|" + strings.TrimSpace(item.Get("result").String())
-	}
-	if key != "" && seen != nil {
-		if _, exists := seen[key]; exists {
-			return nil, false
+	eventType := strings.TrimSpace(gjson.GetBytes(data, "type").String())
+	items := make([]gjson.Result, 0, 1)
+	switch eventType {
+	case "response.output_item.done":
+		items = append(items, gjson.GetBytes(data, "item"))
+	case "response.completed", "response.done":
+		output := gjson.GetBytes(data, "response.output")
+		if output.IsArray() {
+			items = append(items, output.Array()...)
 		}
-		seen[key] = struct{}{}
+	default:
+		return nil
 	}
-	return json.RawMessage(item.Raw), true
+	outputs := make([]json.RawMessage, 0, len(items))
+	for _, item := range items {
+		if !item.Exists() || !item.IsObject() || item.Get("type").String() != "image_generation_call" {
+			continue
+		}
+		if strings.TrimSpace(item.Get("result").String()) == "" {
+			continue
+		}
+		key := strings.TrimSpace(item.Get("id").String())
+		if key == "" {
+			key = strings.TrimSpace(item.Get("output_format").String()) + "|" + strings.TrimSpace(item.Get("result").String())
+		}
+		if key != "" && seen != nil {
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+		}
+		outputs = append(outputs, json.RawMessage(item.Raw))
+	}
+	return outputs
+}
+
+func imageLogResultsFromRawItems(items []json.RawMessage) []ImageLogResult {
+	results := make([]ImageLogResult, 0, len(items))
+	for _, item := range items {
+		if result, ok := imageLogResultFromJSON(item); ok {
+			results = append(results, result)
+		}
+	}
+	return results
+}
+
+func extractOpenAIImageLogResultsFromResponsesJSONBytes(body []byte) []ImageLogResult {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return nil
+	}
+	if item := gjson.GetBytes(body, "item"); item.Exists() && item.IsObject() && item.Get("type").String() == "image_generation_call" {
+		if result, ok := imageLogResultFromJSON([]byte(item.Raw)); ok {
+			return []ImageLogResult{result}
+		}
+	}
+	items := gjson.GetBytes(body, "output")
+	if !items.IsArray() {
+		items = gjson.GetBytes(body, "response.output")
+	}
+	// The same normalizer is reused by the native Images-compatible path,
+	// whose response stores image items under data[].
+	if items.IsArray() == false {
+		items = gjson.GetBytes(body, "data")
+		if items.IsArray() {
+			raw := make([]json.RawMessage, 0, len(items.Array()))
+			for _, item := range items.Array() {
+				raw = append(raw, json.RawMessage(item.Raw))
+			}
+			return imageLogResultsFromRawItems(raw)
+		}
+	}
+	if !items.IsArray() {
+		return nil
+	}
+	return imageLogResultsFromRawItems(func() []json.RawMessage {
+		raw := make([]json.RawMessage, 0, len(items.Array()))
+		for _, item := range items.Array() {
+			if item.Get("type").String() == "image_generation_call" {
+				raw = append(raw, json.RawMessage(item.Raw))
+			}
+		}
+		return raw
+	}())
+}
+
+func extractOpenAIImageLogResultsFromResponsesSSEBody(body string) []ImageLogResult {
+	seen := make(map[string]struct{})
+	results := make([]ImageLogResult, 0, 1)
+	forEachOpenAISSEDataPayload(body, func(data []byte) {
+		for _, item := range extractImageGenerationOutputsFromSSEData(data, seen) {
+			if result, ok := imageLogResultFromJSON(item); ok {
+				results = append(results, result)
+			}
+		}
+	})
+	return results
 }
 
 func (s *OpenAIGatewayService) parseSSEUsageFromBody(body string) *OpenAIUsage {

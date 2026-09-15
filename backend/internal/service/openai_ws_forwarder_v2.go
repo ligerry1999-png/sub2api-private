@@ -356,6 +356,8 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 
 	usage := &OpenAIUsage{}
 	imageCounter := newOpenAIImageOutputCounter()
+	streamImageOutputs := make([]json.RawMessage, 0, 1)
+	streamSeenImages := make(map[string]struct{})
 	var firstTokenMs *int
 	responseID := ""
 	var finalResponse []byte
@@ -425,6 +427,7 @@ func (s *OpenAIGatewayService) forwardOpenAIWSV2(
 			Duration:                      time.Since(startTime),
 			FirstTokenMs:                  firstTokenMs,
 			ClientDisconnect:              clientDisconnected,
+			ImageLogResults:               imageLogResultsFromRawItems(streamImageOutputs),
 		}
 	}
 
@@ -655,6 +658,7 @@ readLoop:
 			parseOpenAIWSResponseUsageFromCompletedEvent(message, usage)
 		}
 		imageCounter.AddSSEData(message)
+		streamImageOutputs = append(streamImageOutputs, extractImageGenerationOutputsFromSSEData(message, streamSeenImages)...)
 
 		if eventType == "error" || eventType == "response.failed" {
 			markOpenAICyberPolicyEvent(c, message, http.StatusOK, usage)
@@ -843,6 +847,9 @@ readLoop:
 	result := resultWithUsage()
 	result.ImageCount = imageCounter.Count()
 	result.ImageOutputSizes = imageCounter.Sizes()
+	if len(finalResponse) > 0 {
+		result.ImageLogResults = extractOpenAIImageLogResultsFromResponsesJSONBytes(finalResponse)
+	}
 	return result, nil
 }
 

@@ -695,8 +695,17 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	var usage OpenAIUsage
 	imageCount := parsed.N
 	var firstTokenMs *int
+	recordAPIKeyImageLog := func(results []ImageLogResult) {
+		if len(results) == 0 {
+			return
+		}
+		s.RecordImageGenerationLog(upstreamCtx, c, account, resp.Header.Get("x-request-id"), imageLogSourceOpenAIAPIKey, parsed.Endpoint, requestModel, parsed.Prompt, parsed.SizeTier, time.Since(startTime), results, map[string]any{
+			"route": imageLogSourceOpenAIAPIKey,
+		})
+	}
 	if parsed.Stream && isEventStreamResponse(resp.Header) {
-		streamUsage, streamCount, streamSizes, ttft, err := s.handleOpenAIImagesStreamingResponse(resp, c, startTime, nil, nil)
+		var imageResults []ImageLogResult
+		streamUsage, streamCount, streamSizes, ttft, err := s.handleOpenAIImagesStreamingResponse(resp, c, startTime, nil, nil, &imageResults)
 		if err != nil {
 			if streamCount > 0 {
 				return &OpenAIForwardResult{
@@ -713,6 +722,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 					ImageSize:        parsed.SizeTier,
 					ImageInputSize:   parsed.Size,
 					ImageOutputSizes: streamSizes,
+					ImageLogResults:  imageResults,
 				}, err
 			}
 			return nil, err
@@ -721,6 +731,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 		imageCount = streamCount
 		imageOutputSizes := streamSizes
 		firstTokenMs = ttft
+		recordAPIKeyImageLog(imageResults)
 		return &OpenAIForwardResult{
 			RequestID:        resp.Header.Get("x-request-id"),
 			UpstreamHeaders:  resp.Header,
@@ -735,9 +746,10 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 			ImageSize:        parsed.SizeTier,
 			ImageInputSize:   parsed.Size,
 			ImageOutputSizes: imageOutputSizes,
+			ImageLogResults:  imageResults,
 		}, nil
 	} else {
-		nonStreamUsage, nonStreamCount, nonStreamSizes, err := s.handleOpenAIImagesNonStreamingResponse(upstreamCtx, resp, c, account, parsed)
+		nonStreamUsage, nonStreamCount, nonStreamSizes, imageResults, err := s.handleOpenAIImagesNonStreamingResponse(upstreamCtx, resp, c, account, parsed)
 		if err != nil {
 			return nil, err
 		}
@@ -745,6 +757,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 		if nonStreamCount > 0 {
 			imageCount = nonStreamCount
 		}
+		recordAPIKeyImageLog(imageResults)
 		return &OpenAIForwardResult{
 			RequestID:        resp.Header.Get("x-request-id"),
 			UpstreamHeaders:  resp.Header,
@@ -759,6 +772,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 			ImageSize:        parsed.SizeTier,
 			ImageInputSize:   parsed.Size,
 			ImageOutputSizes: nonStreamSizes,
+			ImageLogResults:  imageResults,
 		}, nil
 	}
 }
@@ -925,10 +939,10 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 	c *gin.Context,
 	account *Account,
 	parsed *OpenAIImagesRequest,
-) (OpenAIUsage, int, []string, error) {
+) (OpenAIUsage, int, []string, []ImageLogResult, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
-		return OpenAIUsage{}, 0, nil, err
+		return OpenAIUsage{}, 0, nil, nil, err
 	}
 	body = s.backfillOpenAIImagesB64JSON(ctx, account, parsed, body)
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -941,7 +955,49 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 	c.Data(resp.StatusCode, contentType, body)
 
 	usage, _ := extractOpenAIUsageFromJSONBytes(body)
-	return usage, extractOpenAIImageCountFromJSONBytes(body), collectOpenAIResponseImageOutputSizesFromJSONBytes(body), nil
+	return usage, extractOpenAIImageCountFromJSONBytes(body), collectOpenAIResponseImageOutputSizesFromJSONBytes(body), extractOpenAIImageLogResultsFromJSONBytes(body), nil
+}
+
+func extractOpenAIImageLogResultsFromJSONBytes(body []byte) []ImageLogResult {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return nil
+	}
+	items := gjson.GetBytes(body, "data")
+	if !items.IsArray() {
+		return nil
+	}
+	results := make([]ImageLogResult, 0, len(items.Array()))
+	for _, item := range items.Array() {
+		if result, ok := imageLogResultFromJSON([]byte(item.Raw)); ok {
+			results = append(results, result)
+		}
+	}
+	return results
+}
+
+func imageLogResultFromJSON(data []byte) (ImageLogResult, bool) {
+	if len(data) == 0 || !gjson.ValidBytes(data) {
+		return ImageLogResult{}, false
+	}
+	item := gjson.ParseBytes(data)
+	result := strings.TrimSpace(item.Get("result").String())
+	if result == "" {
+		result = strings.TrimSpace(item.Get("b64_json").String())
+	}
+	urlValue := strings.TrimSpace(item.Get("url").String())
+	if result == "" && urlValue == "" {
+		return ImageLogResult{}, false
+	}
+	return ImageLogResult{
+		Result:        result,
+		URL:           urlValue,
+		RevisedPrompt: strings.TrimSpace(item.Get("revised_prompt").String()),
+		OutputFormat:  strings.TrimSpace(item.Get("output_format").String()),
+		Size:          strings.TrimSpace(item.Get("size").String()),
+		Background:    strings.TrimSpace(item.Get("background").String()),
+		Quality:       strings.TrimSpace(item.Get("quality").String()),
+		Model:         strings.TrimSpace(item.Get("model").String()),
+	}, true
 }
 
 func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
@@ -950,6 +1006,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 	startTime time.Time,
 	direct *OpenAIImagesRequest,
 	directResultsOut *[]openAIResponsesImageResult,
+	imageResultsOut ...*[]ImageLogResult,
 ) (OpenAIUsage, int, []string, *int, error) {
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
@@ -993,6 +1050,46 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 			*directResultsOut = append(*directResultsOut, result)
 		}
 	}
+	imageLogResultsSeen := make(map[string]struct{})
+	appendImageLogResults := func(data []byte) {
+		if len(imageResultsOut) == 0 || imageResultsOut[0] == nil {
+			return
+		}
+		// Streaming Images responses may include partial preview frames. They
+		// are not final history items and can be incomplete/non-decodable, so
+		// only retain terminal image payloads for the persistent log.
+		eventType := strings.ToLower(strings.TrimSpace(gjson.GetBytes(data, "type").String()))
+		if strings.Contains(eventType, "partial") || strings.Contains(eventType, "progress") {
+			return
+		}
+		if result, ok := imageLogResultFromJSON(data); ok {
+			key := strings.TrimSpace(result.Result)
+			if key == "" {
+				key = strings.TrimSpace(result.URL)
+			}
+			if key != "" {
+				if _, exists := imageLogResultsSeen[key]; exists {
+					return
+				}
+				imageLogResultsSeen[key] = struct{}{}
+			}
+			*imageResultsOut[0] = append(*imageResultsOut[0], result)
+			return
+		}
+		for _, result := range extractOpenAIImageLogResultsFromResponsesJSONBytes(data) {
+			key := strings.TrimSpace(result.Result)
+			if key == "" {
+				key = strings.TrimSpace(result.URL)
+			}
+			if key != "" {
+				if _, exists := imageLogResultsSeen[key]; exists {
+					continue
+				}
+				imageLogResultsSeen[key] = struct{}{}
+			}
+			*imageResultsOut[0] = append(*imageResultsOut[0], result)
+		}
+	}
 	finish := func() error {
 		if direct == nil {
 			return nil
@@ -1011,6 +1108,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesStreamingResponse(
 			return
 		}
 		seenSSEData = true
+		appendImageLogResults(dataBytes)
 		fallbackBody.Reset()
 		fallbackBytes = 0
 		if direct != nil && strings.HasSuffix(gjson.GetBytes(dataBytes, "type").String(), ".completed") {

@@ -30,6 +30,15 @@ gateway_routes="backend/internal/server/routes/gateway.go"
 setting_parse="backend/internal/service/setting_parse.go"
 grok_oauth="backend/internal/service/grok_oauth_service.go"
 database_rehearsal="deploy/database-rehearsal.sh"
+image_log_service="backend/internal/service/image_log.go"
+image_log_recorder="backend/internal/service/openai_images_log.go"
+image_log_result="backend/internal/service/openai_images_responses.go"
+openai_images="backend/internal/service/openai_images.go"
+responses_forward="backend/internal/service/openai_gateway_forward.go"
+responses_handling="backend/internal/service/openai_gateway_response_handling.go"
+responses_handler="backend/internal/handler/openai_gateway_handler.go"
+grok_media_handler="backend/internal/handler/grok_media.go"
+grok_media_service="backend/internal/service/grok_media.go"
 
 assert_contains "$workflow" "workflow_dispatch:"
 assert_contains "$workflow" "migration_rehearsal_sha:"
@@ -121,6 +130,31 @@ assert_contains "$grok_oauth" "return false"
 
 assert_contains "backend/go.mod" "golang.org/x/image v0.45.0"
 assert_contains "backend/go.mod" "golang.org/x/text v0.41.0"
+
+# 私有化全渠道图片日志：官方版本升级时这些符号和入口必须继续存在。
+# 这些检查不是文档约定，而是升级后会直接失败的门禁，避免新增渠道再次
+# 只计费用量、却没有写入后台生图历史。
+assert_contains "$image_log_result" "type ImageLogResult struct"
+assert_contains "$image_log_service" "Results      []ImageLogResult"
+assert_contains "$image_log_service" "imageLogSourceOpenAIAPIKey"
+assert_contains "$image_log_service" "imageLogSourceGrokMedia"
+assert_contains "$image_log_service" "imageLogSourceResponses"
+assert_contains "$image_log_recorder" "func (s *OpenAIGatewayService) RecordImageGenerationLog"
+assert_contains "$image_log_recorder" "resolveImageLogResults"
+assert_contains "$openai_images" "imageLogSourceOpenAIAPIKey"
+assert_contains "$openai_images" "extractOpenAIImageLogResultsFromJSONBytes"
+assert_contains "$responses_handling" "imageLogResultsFromRawItems"
+assert_contains "$responses_forward" "ImageLogResults = imageLogResults"
+assert_contains "backend/internal/service/openai_gateway_grok.go" "imageLogResults = streamResult.imageResults"
+assert_contains "$responses_handler" "RecordImageGenerationLog"
+assert_contains "$responses_handler" "imageLogPromptFromResponsesBody"
+assert_contains "$responses_handler" '"sub2api_responses"'
+assert_contains "backend/internal/service/openai_ws_forwarder_v2.go" "extractImageGenerationOutputsFromSSEData(message, streamSeenImages)"
+assert_contains "backend/internal/service/openai_ws_forwarder_ingress.go" "imageLogResultsFromRawItems(streamImageOutputs)"
+assert_contains "backend/internal/service/openai_gateway_passthrough.go" "imageLogResultsFromRawItems(streamImageOutputs)"
+assert_contains "$grok_media_service" "ImageLogResults:      imageLogResults"
+assert_contains "$grok_media_handler" "RecordImageGenerationLog"
+assert_contains "$grok_media_handler" '"grok_media"'
 
 expected_migration_sha="b98780ae77a0f90efeda8be70645cb3997112f7bc3a9e1938a16fdd7810d902a"
 if command -v sha256sum >/dev/null 2>&1; then

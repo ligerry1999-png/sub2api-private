@@ -823,6 +823,34 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
+				// Responses 的 image_generation 工具结果已经在转发层解析为
+				// ImageLogResults。和计费放在同一个必达任务里，避免请求成功但
+				// 日志异步漏写；API Key、分组和账号都取自本次认证上下文。
+				if len(res.ImageLogResults) > 0 {
+					endpoint := "/v1/responses"
+					if c != nil && c.Request != nil && c.Request.URL != nil && strings.TrimSpace(c.Request.URL.Path) != "" {
+						endpoint = c.Request.URL.Path
+					}
+					requestID := firstNonEmptyString(res.RequestID, res.ResponseID)
+					h.gatewayService.RecordImageGenerationLog(
+						ctx,
+						c,
+						account,
+						requestID,
+						"sub2api_responses",
+						endpoint,
+						reqModel,
+						imageLogPromptFromResponsesBody(body),
+						res.ImageSize,
+						res.Duration,
+						res.ImageLogResults,
+						map[string]any{
+							"route":              "sub2api_responses",
+							"response_id":        res.ResponseID,
+							"image_output_sizes": res.ImageOutputSizes,
+						},
+					)
+				}
 				if err := h.gatewayService.RecordUsage(ctx, &service.OpenAIRecordUsageInput{
 					Result:             res,
 					APIKey:             apiKey,
@@ -2968,6 +2996,26 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				turnRecordPricingAt := turnPricing.currentOr(turnStart)
 				cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 				h.submitOpenAIUsageRecordTask(ctx, result, func(taskCtx context.Context) {
+					if len(result.ImageLogResults) > 0 {
+						h.gatewayService.RecordImageGenerationLog(
+							taskCtx,
+							c,
+							account,
+							firstNonEmptyString(result.RequestID, result.ResponseID),
+							"sub2api_responses_ws",
+							"/v1/responses",
+							turnRequestedModel,
+							imageLogPromptFromResponsesBody(cyberBlockBody),
+							result.ImageSize,
+							result.Duration,
+							result.ImageLogResults,
+							map[string]any{
+								"route":              "sub2api_responses_ws",
+								"response_id":        result.ResponseID,
+								"image_output_sizes": result.ImageOutputSizes,
+							},
+						)
+					}
 					if err := h.gatewayService.RecordUsage(taskCtx, &service.OpenAIRecordUsageInput{
 						Result:             result,
 						APIKey:             apiKey,
@@ -3272,6 +3320,51 @@ func (h *OpenAIGatewayHandler) submitOpenAIUsageRecordTask(parent context.Contex
 		return
 	}
 	h.submitUsageRecordTask(parent, task)
+}
+
+// imageLogPromptFromResponsesBody extracts the human-readable input text used
+// with the Responses image_generation tool. Responses accepts either a plain
+// string or a message/content array, so this intentionally handles both forms
+// without retaining the full request body in the image-log metadata.
+func imageLogPromptFromResponsesBody(body []byte) string {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return ""
+	}
+	input := gjson.GetBytes(body, "input")
+	parts := make([]string, 0, 2)
+	var appendText func(gjson.Result)
+	appendText = func(value gjson.Result) {
+		if !value.Exists() {
+			return
+		}
+		if value.Type == gjson.String {
+			if text := strings.TrimSpace(value.String()); text != "" {
+				parts = append(parts, text)
+			}
+			return
+		}
+		if value.IsArray() {
+			for _, item := range value.Array() {
+				appendText(item)
+			}
+			return
+		}
+		if !value.IsObject() {
+			return
+		}
+		if text := value.Get("text"); text.Exists() {
+			appendText(text)
+			return
+		}
+		if content := value.Get("content"); content.Exists() {
+			appendText(content)
+		}
+	}
+	appendText(input)
+	if len(parts) == 0 {
+		appendText(gjson.GetBytes(body, "instructions"))
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 func (h *OpenAIGatewayHandler) submitMandatoryUsageRecordTask(parent context.Context, task service.UsageRecordTask) {

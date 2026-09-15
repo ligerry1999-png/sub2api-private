@@ -412,6 +412,25 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 		}
 
 		h.gatewayService.ReportOpenAIAccountScheduleResult(account, grokMediaScheduleModel(account, routingModel, result), true, nil)
+		if endpoint == service.GrokMediaEndpointImagesGenerations || endpoint == service.GrokMediaEndpointImagesEdits {
+			if len(result.ImageLogResults) > 0 && h.gatewayService != nil {
+				logModel := firstNonEmptyString(result.Model, requestModel)
+				h.gatewayService.RecordImageGenerationLog(
+					requestCtx,
+					c,
+					account,
+					firstNonEmptyString(result.RequestID, requestID),
+					"grok_media",
+					string(endpoint),
+					logModel,
+					requestInfo.Prompt,
+					requestInfo.SizeTier,
+					result.Duration,
+					result.ImageLogResults,
+					map[string]any{"route": "grok_media"},
+				)
+			}
+		}
 		if isGrokVideoCreateEndpoint(endpoint) && strings.TrimSpace(result.ResponseID) != "" {
 			if err := h.gatewayService.BindGrokMediaVideoRequestAccount(
 				requestCtx, apiKey.GroupID, result.ResponseID, subject.UserID, apiKey.ID, account.ID,

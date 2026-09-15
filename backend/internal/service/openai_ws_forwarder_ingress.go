@@ -973,6 +973,8 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 		responseID := ""
 		usage := OpenAIUsage{}
 		imageCounter := newOpenAIImageOutputCounter()
+		streamImageOutputs := make([]json.RawMessage, 0, 1)
+		streamSeenImages := make(map[string]struct{})
 		var firstTokenMs *int
 		reqStream := openAIWSPayloadBoolFromRaw(payload, "stream", true)
 		turnPreviousResponseID := openAIWSPayloadStringFromRaw(payload, "previous_response_id")
@@ -1147,6 +1149,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 				firstTokenMs = &ms
 			}
 			imageCounter.AddSSEData(upstreamMessage)
+			streamImageOutputs = append(streamImageOutputs, extractImageGenerationOutputsFromSSEData(upstreamMessage, streamSeenImages)...)
 
 			if !clientDisconnected {
 				if needModelReplace && len(mappedModelBytes) > 0 && openAIWSEventMayContainModel(eventType) && bytes.Contains(upstreamMessage, mappedModelBytes) {
@@ -1255,6 +1258,7 @@ func (s *OpenAIGatewayService) ProxyResponsesWebSocketFromClient(
 					result.ImageInputSize = imageInputSize
 					result.ImageOutputSizes = imageCounter.Sizes()
 					result.BillingModel = imageBillingModel
+					result.ImageLogResults = imageLogResultsFromRawItems(streamImageOutputs)
 				}
 				return result, nil
 			}

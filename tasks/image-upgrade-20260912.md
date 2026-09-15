@@ -10,3 +10,10 @@
 ## Review
 
 已移植官方提交 c0d511937、1067e89fa；价格提交与私有字段重复，已跳过。未移植不相关功能。
+
+## 本轮私有化补丁（全渠道生图日志）
+
+- API Key Images、Responses `image_generation`（HTTP/流式/WebSocket）以及 Grok 图片生成/编辑统一写入 `image_logs`。
+- 图片结果统一使用 `ImageLogResult`；远程图片 URL 下载失败时只跳过该张图片，不影响已经成功返回的生图请求。
+- 新账号、新分组和新渠道不使用静态白名单，日志关联信息直接来自本次认证上下文。
+- `scripts/check-private-upgrade-guards.sh` 已加入关键类型、公共记录方法和各入口调用检查；后续同步官方版本必须先通过该门禁。

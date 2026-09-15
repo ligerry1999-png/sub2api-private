@@ -29,8 +29,12 @@ const (
 	openAIImagesPublicFilesPrefix     = "/image-files"
 )
 
-type openAIResponsesImageResult struct {
+// ImageLogResult is the normalized image payload returned by any image-capable
+// upstream route. Result is normally base64/data: content; URL is retained for
+// providers such as Grok that return a temporary HTTPS image URL.
+type ImageLogResult struct {
 	Result        string
+	URL           string
 	RevisedPrompt string
 	OutputFormat  string
 	Size          string
@@ -38,6 +42,9 @@ type openAIResponsesImageResult struct {
 	Quality       string
 	Model         string
 }
+
+// Keep the existing private name for the native OpenAI Images code paths.
+type openAIResponsesImageResult = ImageLogResult
 
 type OpenAIImagesUpstreamError struct {
 	StatusCode        int

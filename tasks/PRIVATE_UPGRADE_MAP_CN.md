@@ -13,6 +13,7 @@
 |---|---|---|---|
 | ChatGPT2API 图片 worker 与失败切换 | `d46d93193`、`9fcdfaf7e` | 顺序迁移并适配新版失败原因返回值 | 不回退新版调度与审计 |
 | 图片日志、缩略图、清理 | `c156a6ee6` 至 `85b361940` | 顺序迁移，人工合并依赖注入与清理服务 | `136_image_logs.sql` 校验和固定 |
+| 全渠道生图日志（API Key、OAuth/SetupToken、Responses、Grok、WebSocket） | `9e468b03d` 及本轮私有扩展 | 各图片入口统一转换为 `ImageLogResult`，从认证上下文绑定用户、密钥、分组和上游账号 | `ImageLogResult`、`RecordImageGenerationLog`、各入口调用和 URL 下载失败降级均由 `check-private-upgrade-guards.sh` 检查 |
 | 异步 `/v1/image-jobs/*` | `98b62164e`、`b09ad99e8` | 人工合并新版组合分组路由 | 保留状态、失败分类、取消 |
 | `result_delivery=file_url` | `f8ed99b98`、`4462dab20` | 迁移并同步新版测试函数签名 | 默认 Base64 行为不变 |
 | `account_manager` | `81eb7b865`、`e55279e36` | 迁移后适配新版 step-up 2FA | 只能访问账号和代理相关管理功能 |

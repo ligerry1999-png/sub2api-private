@@ -213,6 +213,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	searchCount := 0
 	imageCount := 0
 	var imageOutputSizes []string
+	var imageLogResults []ImageLogResult
 	if reqStream {
 		maxLineSize := defaultMaxLineSize
 		if s.cfg != nil && s.cfg.Gateway.MaxLineSize > 0 {
@@ -232,6 +233,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		searchCount = streamResult.searchCount
 		imageCount = streamResult.imageCount
 		imageOutputSizes = streamResult.imageOutputSizes
+		imageLogResults = streamResult.imageResults
 	} else {
 		nonStreamResult, err := s.handleNonStreamingResponse(ctx, resp, c, account, originalModel, upstreamModel)
 		if err != nil {
@@ -242,6 +244,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 		searchCount = nonStreamResult.searchCount
 		imageCount = nonStreamResult.imageCount
 		imageOutputSizes = nonStreamResult.imageOutputSizes
+		imageLogResults = nonStreamResult.imageResults
 	}
 
 	if usage == nil {
@@ -270,6 +273,7 @@ func (s *OpenAIGatewayService) forwardGrokResponses(
 	if imageCount > 0 {
 		result.ImageCount = imageCount
 		result.ImageOutputSizes = imageOutputSizes
+		result.ImageLogResults = imageLogResults
 	}
 	return result, nil
 }
