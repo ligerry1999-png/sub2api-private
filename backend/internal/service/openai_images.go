@@ -708,6 +708,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 		streamUsage, streamCount, streamSizes, ttft, err := s.handleOpenAIImagesStreamingResponse(resp, c, startTime, nil, nil, &imageResults)
 		if err != nil {
 			if streamCount > 0 {
+				recordAPIKeyImageLog(imageResults)
 				return &OpenAIForwardResult{
 					RequestID:        resp.Header.Get("x-request-id"),
 					UpstreamHeaders:  resp.Header,

@@ -152,6 +152,7 @@ assert_contains "$responses_handler" '"sub2api_responses"'
 assert_contains "backend/internal/service/openai_ws_forwarder_v2.go" "extractImageGenerationOutputsFromSSEData(message, streamSeenImages)"
 assert_contains "backend/internal/service/openai_ws_forwarder_ingress.go" "imageLogResultsFromRawItems(streamImageOutputs)"
 assert_contains "backend/internal/service/openai_gateway_passthrough.go" "imageLogResultsFromRawItems(streamImageOutputs)"
+assert_contains "backend/internal/service/openai_ws_http_bridge.go" "extractImageGenerationOutputsFromSSEData(upstreamMessage, streamSeenImages)"
 assert_contains "$grok_media_service" "ImageLogResults:      imageLogResults"
 assert_contains "$grok_media_handler" "RecordImageGenerationLog"
 assert_contains "$grok_media_handler" '"grok_media"'
