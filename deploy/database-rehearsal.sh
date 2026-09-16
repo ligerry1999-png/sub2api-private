@@ -398,6 +398,9 @@ run_application() {
   sha="$2"
   phase="$3"
   active_app="sub2api-rehearsal-app-${phase}-${suffix}"
+  # Token refresh mutates OAuth credentials/error metadata. The rehearsal
+  # must validate migrations against a stable database snapshot instead of
+  # performing provider work on the isolated, intentionally offline network.
   docker run -d \
     --name "$active_app" \
     --network "$network" \
@@ -409,6 +412,7 @@ run_application() {
     -e RUN_MODE=simple \
     -e DASHBOARD_AGGREGATION_ENABLED=false \
     -e USAGE_CLEANUP_ENABLED=false \
+    -e TOKEN_REFRESH_ENABLED=false \
     -e DATABASE_HOST="$postgres" \
     -e DATABASE_PORT=5432 \
     -e DATABASE_USER=sub2api \
