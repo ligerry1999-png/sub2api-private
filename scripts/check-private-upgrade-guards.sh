@@ -117,6 +117,7 @@ assert_contains "$database_rehearsal" "234_group_codex_models_manifest_config.sq
 assert_contains "$database_rehearsal" "validate_v021_migrations"
 assert_contains "$database_rehearsal" "ImageLogService is a required Wire dependency"
 assert_contains "$database_rehearsal" "restore_production_dump"
+assert_contains "$database_rehearsal" "disable_mutating_background_jobs"
 assert_contains "$database_rehearsal" "-e TOKEN_REFRESH_ENABLED=false"
 assert_contains "$database_rehearsal" "to_jsonb(groups) -> 'model_allowlist'"
 assert_contains "$database_rehearsal" "to_jsonb(groups) -> 'models_list_config'"

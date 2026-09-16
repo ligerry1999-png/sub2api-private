@@ -216,6 +216,17 @@ restore_production_dump() {
     -d postgres < "$PRODUCTION_DUMP"
 }
 
+disable_mutating_background_jobs() {
+  # Upstream billing probes write account snapshots immediately on startup.
+  # Disable them only in the isolated rehearsal database so the private
+  # configuration digest measures migration behavior, not provider probes.
+  docker exec "$postgres" psql -U sub2api -d sub2api -v ON_ERROR_STOP=1 -Atqc \
+    "INSERT INTO settings (key, value, updated_at)
+     VALUES ('upstream_billing_probe_settings', '{\"enabled\":false,\"interval_minutes\":30}', NOW())
+     ON CONFLICT (key) DO UPDATE
+       SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;"
+}
+
 validate_v021_migrations() {
   expected_migrations="$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
     "SELECT COUNT(*) FROM schema_migrations WHERE filename IN (
@@ -483,6 +494,7 @@ docker run -d --name "$redis" --network "$network" redis:8-alpine >/dev/null
 wait_for_postgres
 
 restore_production_dump
+disable_mutating_background_jobs
 prepare_migration_220_rehearsal
 migration_221_preexisting=false
 if test "$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
@@ -535,6 +547,7 @@ assert_equal "previous rollback private config digest" "$before_private_config_s
 # A real database rollback means restoring the pre-upgrade dump, not only
 # proving that the old binary can tolerate the forward-migrated schema.
 restore_production_dump
+disable_mutating_background_jobs
 prepare_migration_220_rehearsal
 assert_equal "restored database row snapshot" "$before_snapshot" "$(database_snapshot)"
 assert_equal "restored migration count" "$before_migrations" \
