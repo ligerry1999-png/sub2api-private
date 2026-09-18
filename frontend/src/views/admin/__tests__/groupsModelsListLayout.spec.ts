@@ -24,15 +24,10 @@ describe("groups models list layout", () => {
     );
   });
 
-  it("uses the Gemini-native models endpoint in Gemini group copy", () => {
-    expect(groupsViewSource).toContain(
-      'platform === "gemini" ? "/v1beta/models" : "/v1/models"',
-    );
-    expect(groupsViewSource).toContain(
-      "modelsListEndpoint(createForm.platform)",
-    );
-    expect(groupsViewSource).toContain(
-      "modelsListEndpoint(editForm.platform)",
-    );
+  it("uses the platform-aware model allowlist candidate flow", () => {
+    expect(groupsViewSource).toContain("getModelAllowlistCandidates(groupID, platform)");
+    expect(groupsViewSource).toContain("loadModelAllowlistCandidates(\"create\", 0, newVal)");
+    expect(groupsViewSource).toContain("loadModelAllowlistCandidates(\"edit\", editingGroup.value.id, newVal)");
+    expect(groupsViewSource).toContain("model_allowlist: buildModelAllowlistConfig");
   });
 });

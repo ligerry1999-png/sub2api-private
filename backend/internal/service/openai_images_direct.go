@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,20 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
+
+type openAIImagesForceResponsesContextKey struct{}
+
+func withOpenAIImagesForceResponses(ctx context.Context) context.Context {
+	return context.WithValue(ctx, openAIImagesForceResponsesContextKey{}, true)
+}
+
+func isOpenAIImagesForceResponses(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	forced, _ := ctx.Value(openAIImagesForceResponsesContextKey{}).(bool)
+	return forced
+}
 
 // 显式列出已接入的模型，不把未来模型或未知快照自动送到直调端点。
 func usesCodexDirectImages(model string) bool {
@@ -193,7 +208,7 @@ func (s *OpenAIGatewayService) handleCodexDirectImagesNonStreamingResponse(
 	resp *http.Response,
 	c *gin.Context,
 	parsed *OpenAIImagesRequest,
-	resultsOut *[]openAIResponsesImageResult,
+	resultsOut ...*[]openAIResponsesImageResult,
 ) (OpenAIUsage, int, []string, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
@@ -206,8 +221,8 @@ func (s *OpenAIGatewayService) handleCodexDirectImagesNonStreamingResponse(
 	if err != nil {
 		return OpenAIUsage{}, 0, nil, err
 	}
-	if resultsOut != nil {
-		*resultsOut = append((*resultsOut)[:0], results...)
+	if len(resultsOut) > 0 && resultsOut[0] != nil {
+		*resultsOut[0] = append((*resultsOut[0])[:0], results...)
 	}
 	usage, _ := codexDirectImagesUsage(body)
 	if observer := upstreamResponseModelObserverFromContext(c); observer != nil {
@@ -252,7 +267,6 @@ func (s *OpenAIGatewayService) handleCodexDirectImagesNonStreamingResponse(
 	c.Data(resp.StatusCode, contentType, body)
 	return usage, len(results), openAIResponsesImageResultSizes(results), nil
 }
-
 func codexDirectImagesSSEResults(payload []byte, parsed *OpenAIImagesRequest) []openAIResponsesImageResult {
 	if len(payload) == 0 || !gjson.ValidBytes(payload) {
 		return nil
