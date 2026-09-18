@@ -2320,14 +2320,6 @@ func buildResponsesOutputJSON(acc *apicompat.BufferedResponseAccumulator, imageO
 	return outputJSON, true
 }
 
-func extractImageGenerationOutputFromSSEData(data []byte, seen map[string]struct{}) (json.RawMessage, bool) {
-	outputs := extractImageGenerationOutputsFromSSEData(data, seen)
-	if len(outputs) == 0 {
-		return nil, false
-	}
-	return outputs[0], true
-}
-
 // extractImageGenerationOutputsFromSSEData accepts both per-item terminal
 // events and response.completed/response.done events. Some compatible
 // upstreams omit response.output_item.done and only include the final output
@@ -2397,7 +2389,7 @@ func extractOpenAIImageLogResultsFromResponsesJSONBytes(body []byte) []ImageLogR
 	}
 	// The same normalizer is reused by the native Images-compatible path,
 	// whose response stores image items under data[].
-	if items.IsArray() == false {
+	if !items.IsArray() {
 		items = gjson.GetBytes(body, "data")
 		if items.IsArray() {
 			raw := make([]json.RawMessage, 0, len(items.Array()))
