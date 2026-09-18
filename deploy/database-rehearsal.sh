@@ -166,6 +166,17 @@ video_price_snapshot() {
     "SELECT COALESCE(jsonb_agg(jsonb_build_array(${id_column}, platform, video_price_480p, video_price_720p, video_price_1080p, ${model_prices_expression}) ORDER BY ${id_column})::text, '[]') FROM ${table_name} WHERE ${platform_predicate} AND (video_price_480p IS NOT NULL OR video_price_720p IS NOT NULL OR video_price_1080p IS NOT NULL OR ${model_prices_expression} IS NOT NULL);"
 }
 
+video_model_prices_snapshot_expression() {
+  if test "$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
+    "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'groups' AND column_name = 'video_model_prices';")" -eq 1; then
+    printf 'video_model_prices'
+  else
+    # Older production dumps predate migration 217, so the column is not
+    # available until the candidate applies that migration.
+    printf 'NULL::jsonb'
+  fi
+}
+
 group_pricing_snapshot() {
   docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
     "SELECT COALESCE(jsonb_agg(jsonb_build_array(id, long_context_pricing_enabled, model_pricing) ORDER BY id)::text, '[]') FROM groups;"
@@ -506,6 +517,7 @@ before_snapshot="$(database_snapshot)"
 before_private_config_snapshot="$(private_config_snapshot)"
 before_schema_snapshot="$(schema_snapshot)"
 before_migrations="$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc 'SELECT COUNT(*) FROM schema_migrations;')"
+before_video_model_prices_expression="$(video_model_prices_snapshot_expression)"
 if test "$migration_220_preexisting" = true; then
   before_non_grok_video_prices="$(video_price_snapshot non-grok groups_video_price_backup_220 group_id)"
   before_current_non_grok_video_prices="$(video_price_snapshot non-grok groups id)"
@@ -518,7 +530,7 @@ if test "$migration_221_preexisting" = true; then
 else
   before_group_pricing='[]'
 fi
-before_grok_video_prices="$(video_price_snapshot grok groups id "NULL::jsonb")"
+before_grok_video_prices="$(video_price_snapshot grok groups id "$before_video_model_prices_expression")"
 
 run_application_checked "$candidate_image" "$CANDIDATE_SHA" candidate-first
 after_upgrade_snapshot="$(database_snapshot)"
