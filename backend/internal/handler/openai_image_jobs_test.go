@@ -27,7 +27,9 @@ func TestForwardImageJobForcesFileURLDelivery(t *testing.T) {
 
 	dataDir := t.TempDir()
 	cfg := durableImageJobTestConfig(dataDir, 10, 1<<20)
-	cfg.Server.Port = server.Listener.Addr().(*net.TCPAddr).Port
+	tcpAddr, ok := server.Listener.Addr().(*net.TCPAddr)
+	require.True(t, ok)
+	cfg.Server.Port = tcpAddr.Port
 	store := newOpenAIImageJobStore(cfg)
 	jobID := "imgjob_file_url_delivery"
 	require.NoError(t, store.create(durableImageJobTestJob(jobID, openAIImageJobStatusRunning, time.Now())))
