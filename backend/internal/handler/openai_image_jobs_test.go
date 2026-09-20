@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,43 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestForwardImageJobForcesFileURLDelivery(t *testing.T) {
+	receivedHeaders := make(chan http.Header, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedHeaders <- r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":1,"data":[]}`))
+	}))
+	defer server.Close()
+
+	dataDir := t.TempDir()
+	cfg := durableImageJobTestConfig(dataDir, 10, 1<<20)
+	tcpAddr, ok := server.Listener.Addr().(*net.TCPAddr)
+	require.True(t, ok)
+	cfg.Server.Port = tcpAddr.Port
+	store := newOpenAIImageJobStore(cfg)
+	jobID := "imgjob_file_url_delivery"
+	require.NoError(t, store.create(durableImageJobTestJob(jobID, openAIImageJobStatusRunning, time.Now())))
+	h := &OpenAIGatewayHandler{cfg: cfg, imageJobStore: store}
+	header := make(http.Header)
+	header.Set("X-Image-Result-Delivery", "base64")
+
+	result := h.forwardImageJob(
+		context.Background(),
+		jobID,
+		"/v1/images/generations",
+		[]byte(`{"model":"gpt-image-2","prompt":"fake only"}`),
+		header,
+		5*time.Second,
+	)
+
+	require.NoError(t, result.err)
+	require.True(t, result.resultStored)
+	forwarded := <-receivedHeaders
+	require.Equal(t, jobID, forwarded.Get("X-Sub2API-Image-Job-ID"))
+	require.Equal(t, "file_url", forwarded.Get("X-Image-Result-Delivery"))
+}
 
 func TestServeImageJobPublicFile(t *testing.T) {
 	gin.SetMode(gin.TestMode)
