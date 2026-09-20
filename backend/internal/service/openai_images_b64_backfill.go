@@ -96,27 +96,42 @@ func (s *OpenAIGatewayService) backfillOpenAIImagesB64JSON(
 // 再无条件拒绝回环、私网、链路本地等目的地（含重定向的每一跳），经账户代理下载，
 // 大小上限与 OAuth 路径的单图下载一致，且前 512 字节须嗅探为 png/jpeg/webp/gif。
 func (s *OpenAIGatewayService) fetchOpenAIImageURLBase64(ctx context.Context, account *Account, rawURL string) (string, error) {
+	data, err := s.fetchOpenAIImageURLBytes(ctx, account, rawURL)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+func (s *OpenAIGatewayService) fetchOpenAIImageURLBytes(ctx context.Context, account *Account, rawURL string) ([]byte, error) {
 	if strings.HasPrefix(strings.ToLower(rawURL), "data:") {
 		if encoded := normalizeOpenAIImageBase64(rawURL); encoded != "" {
-			return encoded, nil
+			data, err := base64.StdEncoding.DecodeString(encoded)
+			if err != nil {
+				return nil, fmt.Errorf("decode data url payload: %w", err)
+			}
+			return data, nil
 		}
-		return "", errors.New("data url payload is not valid base64")
+		return nil, errors.New("data url payload is not valid base64")
 	}
 	if s == nil || s.httpUpstream == nil {
-		return "", errors.New("http upstream is not configured")
+		return nil, errors.New("http upstream is not configured")
+	}
+	if account == nil {
+		return nil, errors.New("image download account is not configured")
 	}
 	downloadURL, err := s.validateOutboundURL(rawURL)
 	if err != nil {
-		return "", fmt.Errorf("invalid image url: %w", err)
+		return nil, fmt.Errorf("invalid image url: %w", err)
 	}
 	if err := rejectPrivateImageHost(downloadURL); err != nil {
-		return "", err
+		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(WithHTTPUpstreamPublicHostsOnly(ctx), openAIImageURLDownloadTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
-		return "", fmt.Errorf("build image download request: %w", err)
+		return nil, fmt.Errorf("build image download request: %w", err)
 	}
 	req.Header.Set("Accept", "image/*,*/*;q=0.8")
 	proxyURL := ""
@@ -125,26 +140,26 @@ func (s *OpenAIGatewayService) fetchOpenAIImageURLBase64(ctx context.Context, ac
 	}
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
-		return "", fmt.Errorf("download image: %w", err)
+		return nil, fmt.Errorf("download image: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return "", fmt.Errorf("download image: unexpected status %d", resp.StatusCode)
+		return nil, fmt.Errorf("download image: unexpected status %d", resp.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, openAIImageMaxDownloadBytes+1))
 	if err != nil {
-		return "", fmt.Errorf("read image body: %w", err)
+		return nil, fmt.Errorf("read image body: %w", err)
 	}
 	if int64(len(data)) > openAIImageMaxDownloadBytes {
-		return "", fmt.Errorf("downloaded image exceeds %d bytes", openAIImageMaxDownloadBytes)
+		return nil, fmt.Errorf("downloaded image exceeds %d bytes", openAIImageMaxDownloadBytes)
 	}
 	if len(data) == 0 {
-		return "", errors.New("download image: empty body")
+		return nil, errors.New("download image: empty body")
 	}
 	if !isBackfillImageContent(data) {
-		return "", errors.New("download image: content is not an allowed image format")
+		return nil, errors.New("download image: content is not an allowed image format")
 	}
-	return base64.StdEncoding.EncodeToString(data), nil
+	return data, nil
 }
 
 // rejectPrivateImageHost 拒绝主机为 localhost 或回环、私网、链路本地、未指定地址字面量的下载 URL。

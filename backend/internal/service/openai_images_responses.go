@@ -1098,10 +1098,11 @@ func buildOpenAIImagesAPIResponse(
 }
 
 type openAIImagesResultDeliveryOptions struct {
-	Mode    string
-	BaseURL string
-	DataDir string
-	JobID   string
+	Mode     string
+	BaseURL  string
+	DataDir  string
+	JobID    string
+	FetchURL func(string) ([]byte, error)
 }
 
 func buildOpenAIImagesAPIResponseWithDelivery(
@@ -1128,9 +1129,11 @@ func buildOpenAIImagesAPIResponseWithDelivery(
 			if delivery != nil && delivery.Mode == openAIImagesResultDeliveryFileURL {
 				if publicURL, err := saveOpenAIImageResultForPublicURL(img, createdAt, delivery); err == nil && publicURL != "" {
 					item, _ = sjson.SetBytes(item, "url", publicURL)
-				} else {
+				} else if strings.TrimSpace(img.Result) != "" {
 					item, _ = sjson.SetBytes(item, "url", "data:"+openAIImageOutputMIMEType(img.OutputFormat)+";base64,"+img.Result)
 					item, _ = sjson.SetBytes(item, "delivery_fallback", "base64")
+				} else {
+					return nil, fmt.Errorf("deliver image as file url: %w", err)
 				}
 			} else {
 				item, _ = sjson.SetBytes(item, "url", "data:"+openAIImageOutputMIMEType(img.OutputFormat)+";base64,"+img.Result)
@@ -1164,7 +1167,7 @@ func buildOpenAIImagesAPIResponseWithDelivery(
 	return out, nil
 }
 
-func (s *OpenAIGatewayService) openAIImagesResultDeliveryOptions(c *gin.Context, parsed *OpenAIImagesRequest) *openAIImagesResultDeliveryOptions {
+func (s *OpenAIGatewayService) openAIImagesResultDeliveryOptions(c *gin.Context, parsed *OpenAIImagesRequest, account *Account) *openAIImagesResultDeliveryOptions {
 	mode := normalizeOpenAIImagesResultDelivery("")
 	if parsed != nil {
 		mode = normalizeOpenAIImagesResultDelivery(parsed.ResultDelivery)
@@ -1180,12 +1183,22 @@ func (s *OpenAIGatewayService) openAIImagesResultDeliveryOptions(c *gin.Context,
 	if s != nil && s.cfg != nil && strings.TrimSpace(s.cfg.Pricing.DataDir) != "" {
 		dataDir = strings.TrimSpace(s.cfg.Pricing.DataDir)
 	}
-	return &openAIImagesResultDeliveryOptions{
+	delivery := &openAIImagesResultDeliveryOptions{
 		Mode:    mode,
 		BaseURL: requestBaseURLForOpenAIImages(c),
 		DataDir: dataDir,
 		JobID:   safeOpenAIImageJobIDFromContext(c),
 	}
+	if s != nil && s.httpUpstream != nil && account != nil {
+		requestContext := context.Background()
+		if c != nil && c.Request != nil {
+			requestContext = c.Request.Context()
+		}
+		delivery.FetchURL = func(rawURL string) ([]byte, error) {
+			return s.fetchOpenAIImageURLBytes(requestContext, account, rawURL)
+		}
+	}
+	return delivery
 }
 
 func normalizeOpenAIImagesResultDelivery(value string) string {
@@ -1205,11 +1218,31 @@ func saveOpenAIImageResultForPublicURL(img openAIResponsesImageResult, createdAt
 	if dataDir == "" {
 		dataDir = "./data"
 	}
-	raw, err := decodeOpenAIImageResultBase64(img.Result)
+	var raw []byte
+	var err error
+	if strings.TrimSpace(img.Result) != "" {
+		raw, err = decodeOpenAIImageResultBase64(img.Result)
+	} else if strings.TrimSpace(img.URL) != "" {
+		if delivery.FetchURL == nil {
+			return "", fmt.Errorf("image url downloader is not configured")
+		}
+		raw, err = delivery.FetchURL(strings.TrimSpace(img.URL))
+	} else {
+		return "", fmt.Errorf("image result has neither base64 data nor url")
+	}
 	if err != nil {
 		return "", err
 	}
-	mimeType := openAIImageOutputMIMEType(img.OutputFormat)
+	if len(raw) == 0 {
+		return "", fmt.Errorf("image payload is empty")
+	}
+	if int64(len(raw)) > openAIImageMaxDownloadBytes {
+		return "", fmt.Errorf("image payload exceeds %d bytes", openAIImageMaxDownloadBytes)
+	}
+	mimeType := detectedImageContentType(raw)
+	if !isBackfillImageContent(raw) || mimeType == "" {
+		return "", fmt.Errorf("image payload is not an allowed image format")
+	}
 	ext := openAIImagesPublicFileExtension(mimeType)
 	t := time.Unix(createdAt, 0)
 	if createdAt <= 0 {
@@ -1615,7 +1648,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthNonStreamingResponse(
 		firstMeta.Model = strings.TrimSpace(fallbackModel)
 	}
 
-	responseBody, err := buildOpenAIImagesAPIResponseWithDelivery(results, createdAt, usageRaw, firstMeta, responseFormat, s.openAIImagesResultDeliveryOptions(c, parsed))
+	responseBody, err := buildOpenAIImagesAPIResponseWithDelivery(results, createdAt, usageRaw, firstMeta, responseFormat, s.openAIImagesResultDeliveryOptions(c, parsed, account))
 	if err != nil {
 		return OpenAIUsage{}, 0, nil, err
 	}
