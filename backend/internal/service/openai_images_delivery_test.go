@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"io"
@@ -114,6 +115,49 @@ func TestOpenAIImagesFileURLDeliveryUsesGatewayDownloader(t *testing.T) {
 	publicURL := gjson.GetBytes(body, "data.0.url").String()
 	require.True(t, strings.HasPrefix(publicURL, "https://sub2api.example/image-files/image_jobs/imgjob_gateway/public/"), publicURL)
 	require.NotContains(t, string(body), result.URL)
+}
+
+func TestOpenAIImagesAPIKeyResponseUsesFileURLDelivery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	png := append([]byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}, make([]byte, 32)...)
+	upstream := &httpUpstreamRecorder{resp: b64BackfillImageResponse(http.StatusOK, "image/png", png)}
+	dataDir := t.TempDir()
+	service := &OpenAIGatewayService{
+		cfg:          &config.Config{Pricing: config.PricingConfig{DataDir: dataDir}},
+		httpUpstream: upstream,
+	}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "https://sub2api.example/v1/images/generations", nil)
+	ctx.Request.Host = "sub2api.example"
+	ctx.Request.Header.Set("X-Sub2API-Image-Job-ID", "imgjob_api_key")
+	parsed := &OpenAIImagesRequest{ResponseFormat: "url", ResultDelivery: "file_url"}
+	account := &Account{ID: 7, Concurrency: 2}
+	providerURL := "https://oss5.example/temporary.png"
+	response := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body: io.NopCloser(strings.NewReader(
+			`{"created":123,"data":[{"url":"` + providerURL + `","size":"1024x1365"}]}`,
+		)),
+	}
+
+	_, imageCount, _, _, err := service.handleOpenAIImagesNonStreamingResponse(
+		context.Background(), response, ctx, account, parsed,
+	)
+	require.NoError(t, err)
+	require.Equal(t, 1, imageCount)
+	require.Len(t, upstream.requests, 1)
+	require.Equal(t, providerURL, upstream.requests[0].URL.String())
+	body := recorder.Body.Bytes()
+	publicURL := gjson.GetBytes(body, "data.0.url").String()
+	require.True(t, strings.HasPrefix(publicURL, "https://sub2api.example/image-files/image_jobs/imgjob_api_key/public/"), publicURL)
+	require.NotContains(t, string(body), providerURL)
+	require.False(t, gjson.GetBytes(body, "data.0.b64_json").Exists())
+	rel := strings.TrimPrefix(publicURL, "https://sub2api.example/image-files/")
+	saved, err := os.ReadFile(filepath.Join(dataDir, filepath.FromSlash(rel)))
+	require.NoError(t, err)
+	require.Equal(t, png, saved)
 }
 
 func TestOpenAIImagesFileURLDeliveryRejectsInvalidUpstreamImage(t *testing.T) {

@@ -945,7 +945,14 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 	if err != nil {
 		return OpenAIUsage{}, 0, nil, nil, err
 	}
-	body = s.backfillOpenAIImagesB64JSON(ctx, account, parsed, body)
+	if delivery := s.openAIImagesResultDeliveryOptions(c, parsed, account); delivery != nil {
+		body, err = applyOpenAIImagesFileURLDelivery(body, delivery)
+		if err != nil {
+			return OpenAIUsage{}, 0, nil, nil, err
+		}
+	} else {
+		body = s.backfillOpenAIImagesB64JSON(ctx, account, parsed, body)
+	}
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
 	contentType := "application/json"
 	if s.cfg != nil && !s.cfg.Security.ResponseHeaders.Enabled {
