@@ -1167,6 +1167,38 @@ func buildOpenAIImagesAPIResponseWithDelivery(
 	return out, nil
 }
 
+func applyOpenAIImagesFileURLDelivery(body []byte, delivery *openAIImagesResultDeliveryOptions) ([]byte, error) {
+	if delivery == nil || delivery.Mode != openAIImagesResultDeliveryFileURL {
+		return body, nil
+	}
+	items := gjson.GetBytes(body, "data")
+	if !items.IsArray() {
+		return body, nil
+	}
+	createdAt := gjson.GetBytes(body, "created").Int()
+	for index, item := range items.Array() {
+		result, ok := imageLogResultFromJSON([]byte(item.Raw))
+		if !ok {
+			continue
+		}
+		publicURL, err := saveOpenAIImageResultForPublicURL(result, createdAt, delivery)
+		if err != nil {
+			return nil, fmt.Errorf("deliver image %d as file url: %w", index, err)
+		}
+		body, err = sjson.SetBytes(body, fmt.Sprintf("data.%d.url", index), publicURL)
+		if err != nil {
+			return nil, fmt.Errorf("set image %d file url: %w", index, err)
+		}
+		for _, field := range []string{"b64_json", "result", "delivery_fallback"} {
+			body, err = sjson.DeleteBytes(body, fmt.Sprintf("data.%d.%s", index, field))
+			if err != nil {
+				return nil, fmt.Errorf("remove image %d %s: %w", index, field, err)
+			}
+		}
+	}
+	return body, nil
+}
+
 func (s *OpenAIGatewayService) openAIImagesResultDeliveryOptions(c *gin.Context, parsed *OpenAIImagesRequest, account *Account) *openAIImagesResultDeliveryOptions {
 	mode := normalizeOpenAIImagesResultDelivery("")
 	if parsed != nil {
