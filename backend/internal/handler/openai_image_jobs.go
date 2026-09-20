@@ -497,6 +497,10 @@ func (h *OpenAIGatewayHandler) forwardImageJob(ctx context.Context, jobID string
 		}
 	}
 	req.Header.Del("Content-Length")
+	// Async image jobs must keep the large image payload on this relay. The
+	// synchronous gateway persists it and returns a compact public file URL.
+	req.Header.Set("X-Sub2API-Image-Job-ID", jobID)
+	req.Header.Set("X-Image-Result-Delivery", "file_url")
 
 	client := &http.Client{Timeout: timeout + 15*time.Second}
 	resp, err := client.Do(req)
