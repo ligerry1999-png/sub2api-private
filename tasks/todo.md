@@ -560,3 +560,44 @@
 - Astra 增加 Ultrafast `2x` 回归测试；远程价格目录不可用时，`v0.2.1` 的本地兜底价仍能正确计费。远端 CI、安全扫描、数据库演练和正式部署结果待发布后补齐。
 
 ---
+# Sub2API v0.2.8 私有保留升级执行清单
+
+> 开始日期：2026-09-23
+>
+> 私有线上基线：`0.2.6-private.1` / `8bdfe0339537575a0cb5cce157b7051d66a7ad66`
+>
+> 官方目标：`v0.2.8` / `a3eb7ef302961cba716dc78b39b93b60c467db0e`
+>
+> 目标：在保留另一台电脑已经合入的私有图片文件交付、持久 image-jobs、图片日志、Codex Images 和 Tanzhongyu 部署保护的前提下，接收官方 v0.2.8 的模型与兼容性功能，并用同一精确提交完成 CI、数据库演练和生产部署。
+
+## 计划
+
+- [x] 刷新私有 `origin/main` 和官方 `upstream/main`，确认线上与官方版本
+- [x] 从私有线上精确 SHA 建立隔离升级工作树，避免覆盖原目录未提交改动
+- [x] 合入官方 v0.2.8，解决 Wire、SIMPLE 启动和账号调度冲突
+- [x] 更新私有版本号为 `0.2.8-private.1`，保留私有升级护栏
+- [ ] 运行 shell/私有护栏、Wire 生成、后端 unit/integration、前端检查和安全扫描
+- [ ] 推送候选提交，等待精确 SHA 的 CI、安全扫描和数据库演练通过
+- [ ] 将同一精确 SHA 推送到私有 `main`，仅通过 GitHub Actions `deploy=true` 部署
+- [ ] 上线后核对版本、镜像 SHA、健康状态、私有 image-jobs/图片日志路由、Redis/PostgreSQL 和任务队列
+
+## 官方功能并入范围
+
+- GPT-6 Sol/Luna、Claude Opus 5.5、Grok 4.7，以及对应模型列表、别名、上下文和计费
+- OpenCode Go 用量窗口、自动刷新与同 Key 组共享
+- reasoning effort 计费倍率、Claude Code 客户端版本自动同步
+- 简易模式 API Key 消费窗口、可选默认分组创建
+- 月度备份归档与保留策略、联盟推广提现登记、滚动日志保留
+- Codex 积分/推荐邀请、TypeSafe 内容审核配置档、插件 HostService 账号元数据
+- 工具 Schema、Antigravity、Codex、OpenAI 流式请求和连接稳定性修复
+
+## 私有能力护栏
+
+- `/v1/image-jobs/*` 持久队列、取消、重试、重启恢复和异步任务文件交付
+- API Key/OAuth/Responses/Grok 图片日志、透明背景参数和文件 URL 交付
+- ChatGPT2API worker/fallback、Codex 私有路由、支付和管理员权限
+- `tanzhongyu` 生产部署、数据库备份/回滚、GitHub Runner 构建、服务器 `--no-build`
+
+## Review
+
+- 待完成：远端门禁和生产部署结果。
