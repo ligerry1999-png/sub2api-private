@@ -6,18 +6,24 @@
 
 ## 计划
 
-- [ ] 从当前私有 `main` 建立可回退备份分支和隔离升级分支
-- [ ] 审计官方变更与私有生图、Codex、支付、风控和部署文件的重叠范围
-- [ ] 合并官方 `v0.2.9`、`v0.2.10`、`v0.2.11` 及其后主分支安全/Grok修复
-- [ ] 解决冲突并保留 `/v1/image-jobs/*`、`image_logs`、`file_url`、Codex 和 GitHub Actions 部署行为
-- [ ] 审核新默认配置：API Key 创建限制和余额在途预占
-- [ ] 运行 `git diff --check`、私有升级护栏、后端图片/计费/Codex 定向测试和前端检查
-- [ ] 检查版本、差异、迁移文件和候选分支状态，形成升级 Review
-- [ ] 本地验证通过后再决定是否推送私有仓库；不在本轮直接部署生产
+- [x] 从当前私有 `main` 建立可回退备份分支和隔离升级分支
+- [x] 审计官方变更与私有生图、Codex、支付、风控和部署文件的重叠范围
+- [x] 合并官方 `v0.2.9`、`v0.2.10`、`v0.2.11` 及其后主分支安全/Grok修复
+- [x] 解决冲突并保留 `/v1/image-jobs/*`、`image_logs`、`file_url`、Codex 和 GitHub Actions 部署行为
+- [x] 审核新默认配置：API Key 创建限制和余额在途预占
+- [x] 运行 `git diff --check`、私有升级护栏、前端 lint/typecheck/test/build；后端 Go 测试待 CI
+- [x] 检查版本、差异、迁移文件和候选分支状态，形成升级 Review
+- [ ] 推送候选到私有仓库并等待 CI、安全扫描、数据库演练结果
+- [ ] 不直接部署生产；部署需另行确认并通过生产发布门禁
 
 ## Review
 
-- 待完成。
+- 当前候选分支：`upgrade/v0.2.11-private-20261001`，版本：`0.2.11-private.1`。
+- 已合入官方 `v0.2.9`、`v0.2.10`、`v0.2.11` 及 `v0.2.11` 后的 Axios/Grok 修复。
+- 已保留私有持久 `/v1/image-jobs/*` 队列、`/image-files/*` 文件投递、`image_logs`、图片清理、Codex 图片桥接和部署护栏；私有升级护栏通过。
+- 已确认 GPT-6.1 Sol、Claude Sonnet 5.5、Claude 额度查询/兑换、远程 Codex 模型目录、API Key 创建限制、余额在途预占和 Grok 修复接线存在。
+- 前端 ESLint、TypeScript、国际化检查、337 个测试文件/2581 个测试和生产构建全部通过。
+- 本机没有 Go 工具链，后端 unit/integration、govulncheck 和数据库隔离演练由推送后的 GitHub Actions 验证；未部署生产。
 
 > 开始日期：2026-09-09
 >
