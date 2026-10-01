@@ -53,13 +53,28 @@ build_image() {
 }
 
 wait_for_postgres() {
-  for _ in $(seq 1 60); do
+  previous_start_time=""
+  stable_checks=0
+  for _ in $(seq 1 120); do
     if docker exec "$postgres" pg_isready -U sub2api -d sub2api >/dev/null 2>&1; then
-      return 0
+      current_start_time="$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
+        'SELECT pg_postmaster_start_time()' 2>/dev/null || true)"
+      if test -n "$current_start_time" && test "$current_start_time" = "$previous_start_time"; then
+        stable_checks=$((stable_checks + 1))
+        if test "$stable_checks" -ge 2; then
+          return 0
+        fi
+      else
+        stable_checks=0
+      fi
+      previous_start_time="$current_start_time"
+    else
+      previous_start_time=""
+      stable_checks=0
     fi
-    sleep 2
+    sleep 1
   done
-  printf 'isolated PostgreSQL did not become ready\n' >&2
+  printf 'isolated PostgreSQL did not reach a stable ready state\n' >&2
   return 1
 }
 
