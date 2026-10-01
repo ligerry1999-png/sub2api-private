@@ -105,7 +105,7 @@ assert_contains "$compose" 'no-new-privileges:true'
 assert_contains "Dockerfile" 'LABEL org.opencontainers.image.revision="${COMMIT}"'
 test -f .github/workflows/database-rehearsal.yml || fail "database rehearsal workflow is missing"
 test -f "$database_rehearsal" || fail "database rehearsal script is missing"
-assert_contains ".github/workflows/database-rehearsal.yml" "upgrade/v0.2.1-private"
+assert_contains ".github/workflows/database-rehearsal.yml" "upgrade/v0.2.11-private-20261001"
 assert_contains "$database_rehearsal" 'docker network create --internal "$network"'
 assert_contains "$database_rehearsal" "groups_video_price_backup_220"
 assert_contains "$database_rehearsal" "221_group_model_pricing.sql"
