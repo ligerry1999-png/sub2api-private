@@ -115,7 +115,7 @@ func TestBillingServiceGPT6AstraUsesOfficialPricingAcrossTiersAndLongContext(t *
 	}{
 		{name: "standard", priceScale: 1},
 		{name: "fast", serviceTier: "priority", priceScale: 2},
-		{name: "ultrafast", serviceTier: "ultrafast", priceScale: 2},
+		{name: "ultrafast", serviceTier: "ultrafast", priceScale: 6},
 		{name: "flex", serviceTier: "flex", priceScale: 0.5},
 	}
 	for _, tier := range tiers {
