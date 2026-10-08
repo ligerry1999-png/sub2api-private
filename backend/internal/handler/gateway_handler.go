@@ -1238,7 +1238,7 @@ func (h *GatewayHandler) CodexCompatibleModels(c *gin.Context) {
 
 	var modelIDs []string
 	if platform == service.PlatformComposite {
-		modelIDs = h.compositeAvailableModels(c.Request.Context(), groupID)
+		modelIDs = h.compositeAvailableModels(c.Request.Context(), groupID, false)
 		if len(modelIDs) == 0 {
 			modelIDs = defaultModelIDsForPlatform(service.PlatformComposite)
 		}
