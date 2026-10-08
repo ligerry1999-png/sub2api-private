@@ -105,7 +105,7 @@ assert_contains "$compose" 'no-new-privileges:true'
 assert_contains "Dockerfile" 'LABEL org.opencontainers.image.revision="${COMMIT}"'
 test -f .github/workflows/database-rehearsal.yml || fail "database rehearsal workflow is missing"
 test -f "$database_rehearsal" || fail "database rehearsal script is missing"
-assert_contains ".github/workflows/database-rehearsal.yml" "upgrade/v0.2.11-private-20261001"
+assert_contains ".github/workflows/database-rehearsal.yml" "upgrade/v0.2.14-private-20261008"
 assert_contains "$database_rehearsal" 'docker network create --internal "$network"'
 assert_contains "$database_rehearsal" "groups_video_price_backup_220"
 assert_contains "$database_rehearsal" "221_group_model_pricing.sql"
@@ -168,7 +168,7 @@ fi
 test "$actual_migration_sha" = "$expected_migration_sha" || \
   fail "backend/migrations/136_image_logs.sql checksum changed"
 
-test "$(tr -d '\r\n' < backend/cmd/server/VERSION)" = "0.2.11-private.1" || \
+test "$(tr -d '\r\n' < backend/cmd/server/VERSION)" = "0.2.14-private.1" || \
   fail "private version marker changed unexpectedly"
 
 printf 'private upgrade guards passed\n'
