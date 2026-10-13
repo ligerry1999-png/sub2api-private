@@ -7,7 +7,7 @@
 ## 先看结论
 
 - 私有仓库：`https://github.com/ligerry1999-png/sub2api-private.git`
-- 当前私有 GitHub `main`：`335e35974ec7a108bbea9eafd36c92df662bb6fc`
+- 当前私有 GitHub `main`：以远程 `origin/main` 的实际返回值为准；本次交接修正提交为 `3f50a8c4d`。
 - 当前线上版本：`0.2.14-private.1`
 - 当前线上最近一次正式部署提交：`8a0ba6d48188a1003b08eb583c15e344905beec4`
 - 当前官方上游：`v0.2.16`，上游 `main` 为 `4d9ac3e482106d2da3a39fe3e546d8d6801f1cc1`
@@ -163,7 +163,7 @@ git rev-parse HEAD
 git ls-remote origin refs/heads/main
 ```
 
-确认本地 HEAD 和远程 `main` 都是 `335e35974ec7a108bbea9eafd36c92df662bb6fc` 后，再开始工作。这个提交包含交接文档；服务器当前仍运行上面的 `8a0ba6d`，不要把两者混为一谈。
+确认本地 HEAD 和远程 `main` 输出相同后，再开始工作。这个提交包含交接文档；服务器当前仍运行上面的 `8a0ba6d`，不要把两者混为一谈。
 
 官方上游只用于比较：
 
