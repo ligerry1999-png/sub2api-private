@@ -74,6 +74,8 @@
 
 旁边的独立项目是：`/Users/bricoleur/Documents/小红书 cil/chatgpt2api`。它不是 Sub2API 私有仓库的一部分；如果以后开启 worker，需要把它作为单独仓库重新克隆和部署配置。
 
+该项目的私有仓库是 `https://github.com/ligerry1999-png/chatgpt2api-private.git`。其部署工作流已在 `a98e146` 修正为“只手动触发，GitHub Runner 构建，服务器 `docker load` + `--no-build`”；代码推送不会再自动部署。旧工作流曾在一次文档推送后触发 run `38398858415`，已在服务器构建阶段取消，随后只读检查确认两个生产容器重启次数均为 0、镜像未切换。
+
 ### 4. `file_url` 图片结果交付
 
 图片请求可以使用 `result_delivery=file_url`，把结果返回为 `/image-files/...` 文件地址；没有传这个参数时，默认 Base64 行为必须保留。
@@ -180,6 +182,7 @@ git fetch upstream --tags --prune
 - 生产服务器上的 `.env`、PostgreSQL 数据、Redis 数据、图片目录、数据库备份和运行态文件。
 - 新电脑本地的 API Key。当前这台 Mac 用的是 macOS 钥匙串，不是仓库文件。
 - SSH 私钥，例如 `~/.ssh/chatgpt2api_38_246_232_202`。只能通过安全渠道迁移，不能复制到仓库或聊天记录。
+- 独立 `chatgpt2api` 项目的被 Git 忽略运行数据：`data/accounts.json`、`data/auth_keys.json`、`data/image_tasks.json`、`data/logs.jsonl` 和 `config.json`。它们不能通过重新 clone 恢复，也不能提交到 GitHub。
 
 仓库里的 `.env.example` 只有示例配置，不包含生产密钥。新电脑要使用本机生图辅助脚本时，需要重新配置本机钥匙串，而不是把 Key 写入脚本。
 
@@ -189,6 +192,7 @@ git fetch upstream --tags --prune
 - `frontend/tsconfig*.tsbuildinfo`、`frontend/vite.config.js`、`frontend/vite.config.d.ts`。
 - `backend/internal/web/dist/` 等构建产物。
 - GitHub Actions Runner 临时导出的镜像包和临时日志。
+- 独立 `chatgpt2api/.venv/`：当前约 74 MB，是可重新创建的 Python 虚拟环境。
 
 这些路径已被 Git 忽略或由构建重新生成，不应该作为迁移依赖。
 
