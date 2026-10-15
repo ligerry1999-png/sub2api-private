@@ -258,7 +258,7 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 		}
 
 		service.SetOpsLatencyMs(c, service.OpsRoutingLatencyMsKey, time.Since(routingStart).Milliseconds())
-		if !parsed.Stream && !jsonKeepaliveStarted {
+		if shouldStartOpenAIImagesJSONKeepalive(c, parsed, jsonKeepaliveStarted) {
 			stopJSONKeepalive = service.StartOpenAIImagesJSONKeepalive(c, h.openAIImagesJSONKeepaliveInterval())
 			jsonKeepaliveStarted = true
 		}
@@ -465,6 +465,15 @@ func (h *OpenAIGatewayHandler) openAIImagesJSONKeepaliveInterval() time.Duration
 		return 0
 	}
 	return time.Duration(h.cfg.Gateway.ImageNonstreamKeepaliveInterval) * time.Second
+}
+
+func shouldStartOpenAIImagesJSONKeepalive(c *gin.Context, parsed *service.OpenAIImagesRequest, started bool) bool {
+	if c == nil || parsed == nil || parsed.Stream || started {
+		return false
+	}
+	// The async worker needs the final HTTP status and delivery-failure header.
+	// A whitespace heartbeat would commit 200 before the image can be downloaded.
+	return !isSafeImageJobID(c.GetHeader("X-Sub2API-Image-Job-ID"))
 }
 
 func isMultipartImagesContentType(contentType string) bool {

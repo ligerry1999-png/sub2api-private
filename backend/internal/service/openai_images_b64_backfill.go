@@ -6,15 +6,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+	"go.uber.org/zap"
 )
 
 // AccountExtraImagesURLToB64JSON 是账户 extra 中的开关键。开启后，Images 端点的非流式响应里
@@ -23,6 +26,10 @@ const AccountExtraImagesURLToB64JSON = "images_url_to_b64_json"
 
 // openAIImageURLDownloadTimeout 是单张图片 url 下载的超时上限。
 const openAIImageURLDownloadTimeout = 60 * time.Second
+
+// These retries fetch the same already-generated image URL. They never repeat
+// the paid image-generation request.
+const openAIImageURLDownloadMaxAttempts = 3
 
 // ImagesURLToB64JSONEnabled 返回账户是否开启了 url 转 b64_json 回填。
 func ImagesURLToB64JSONEnabled(account *Account) bool {
@@ -127,39 +134,120 @@ func (s *OpenAIGatewayService) fetchOpenAIImageURLBytes(ctx context.Context, acc
 	if err := rejectPrivateImageHost(downloadURL); err != nil {
 		return nil, err
 	}
+	parsedURL, err := url.Parse(downloadURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse image url: %w", err)
+	}
+	host, port := parsedURL.Hostname(), parsedURL.Port()
+	if port == "" {
+		if parsedURL.Scheme == "https" {
+			port = "443"
+		} else {
+			port = "80"
+		}
+	}
 	ctx, cancel := context.WithTimeout(WithHTTPUpstreamPublicHostsOnly(ctx), openAIImageURLDownloadTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build image download request: %w", err)
-	}
-	req.Header.Set("Accept", "image/*,*/*;q=0.8")
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
-	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
-	if err != nil {
-		return nil, fmt.Errorf("download image: %w", err)
+	logFailure := func(attempt int, status int, reason string) {
+		logger.FromContext(ctx).Warn("openai.images.image_url_download_failed",
+			zap.Int64("account_id", account.ID),
+			zap.String("image_url_host", host),
+			zap.String("image_url_port", port),
+			zap.Int("image_url_http_status", status),
+			zap.Int("download_attempts", attempt),
+			zap.String("failure_reason", reason),
+		)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("download image: unexpected status %d", resp.StatusCode)
+	for attempt := 1; attempt <= openAIImageURLDownloadMaxAttempts; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("build image download request: %w", err)
+		}
+		req.Header.Set("Accept", "image/*,*/*;q=0.8")
+		resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+		if err != nil {
+			if attempt < openAIImageURLDownloadMaxAttempts && ctx.Err() == nil && retryableOpenAIImageURLDownloadError(err) {
+				if waitErr := waitOpenAIImageURLDownloadRetry(ctx, attempt); waitErr == nil {
+					continue
+				}
+			}
+			logFailure(attempt, 0, "transport_error")
+			var urlErr *url.Error
+			if errors.As(err, &urlErr) {
+				err = urlErr.Err // Do not place a signed URL in application logs.
+			}
+			return nil, fmt.Errorf("download image: %w", err)
+		}
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			status := resp.StatusCode
+			_ = resp.Body.Close()
+			if attempt < openAIImageURLDownloadMaxAttempts && ctx.Err() == nil && retryableOpenAIImageURLDownloadStatus(status) {
+				if waitErr := waitOpenAIImageURLDownloadRetry(ctx, attempt); waitErr == nil {
+					continue
+				}
+			}
+			logFailure(attempt, status, "http_status")
+			return nil, fmt.Errorf("download image: unexpected status %d", status)
+		}
+		data, readErr := io.ReadAll(io.LimitReader(resp.Body, openAIImageMaxDownloadBytes+1))
+		_ = resp.Body.Close()
+		if readErr != nil {
+			if attempt < openAIImageURLDownloadMaxAttempts && ctx.Err() == nil && retryableOpenAIImageURLDownloadError(readErr) {
+				if waitErr := waitOpenAIImageURLDownloadRetry(ctx, attempt); waitErr == nil {
+					continue
+				}
+			}
+			logFailure(attempt, resp.StatusCode, "read_error")
+			return nil, fmt.Errorf("read image body: %w", readErr)
+		}
+		if int64(len(data)) > openAIImageMaxDownloadBytes {
+			return nil, fmt.Errorf("downloaded image exceeds %d bytes", openAIImageMaxDownloadBytes)
+		}
+		if len(data) == 0 {
+			return nil, errors.New("download image: empty body")
+		}
+		if !isBackfillImageContent(data) {
+			return nil, errors.New("download image: content is not an allowed image format")
+		}
+		return data, nil
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, openAIImageMaxDownloadBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("read image body: %w", err)
+	return nil, errors.New("image download attempts exhausted")
+}
+
+func retryableOpenAIImageURLDownloadStatus(status int) bool {
+	return status == http.StatusNotFound || status == http.StatusRequestTimeout ||
+		status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
+}
+
+func retryableOpenAIImageURLDownloadError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return false
 	}
-	if int64(len(data)) > openAIImageMaxDownloadBytes {
-		return nil, fmt.Errorf("downloaded image exceeds %d bytes", openAIImageMaxDownloadBytes)
+	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ETIMEDOUT) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
 	}
-	if len(data) == 0 {
-		return nil, errors.New("download image: empty body")
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
 	}
-	if !isBackfillImageContent(data) {
-		return nil, errors.New("download image: content is not an allowed image format")
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
+}
+
+func waitOpenAIImageURLDownloadRetry(ctx context.Context, attempt int) error {
+	timer := time.NewTimer(time.Duration(attempt) * 250 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
-	return data, nil
 }
 
 // rejectPrivateImageHost 拒绝主机为 localhost 或回环、私网、链路本地、未指定地址字面量的下载 URL。

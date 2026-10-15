@@ -1196,7 +1196,7 @@ func TestOpenAIGatewayServiceForwardImages_OAuth429CarriesSameAccountRetryWindow
 	require.WithinDuration(t, startedAt.Add(openAIOAuth429RetryWindow), failoverErr.SameAccountRetryDeadline, time.Second)
 }
 
-func TestOpenAIImagesOAuthBodyReadTransportErrorFailover(t *testing.T) {
+func TestOpenAIImagesOAuthBodyReadTransportErrorDoesNotRegenerate(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(rec)
@@ -1219,22 +1219,11 @@ func TestOpenAIImagesOAuthBodyReadTransportErrorFailover(t *testing.T) {
 	err := svc.handleOpenAIImagesOAuthResponseError(context.Background(), c, account, "gpt-image-2", "https://api.openai.com/v1/responses", resp, OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c), readErr)
 
 	var failoverErr *UpstreamFailoverError
-	require.ErrorAs(t, err, &failoverErr)
-	require.Equal(t, http.StatusBadGateway, failoverErr.StatusCode)
-	require.JSONEq(t, `{"error":{"type":"upstream_error","code":"upstream_http2_stream_error","message":"Upstream HTTP/2 stream failed"}}`, string(failoverErr.ResponseBody))
-	require.Equal(t, "req_h2_read_failure", failoverErr.ResponseHeaders.Get("x-request-id"))
-	require.Equal(t, "preserved", failoverErr.ResponseHeaders.Get("x-upstream"))
-	resp.Header.Set("X-Upstream", "mutated")
-	require.Equal(t, "preserved", failoverErr.ResponseHeaders.Get("x-upstream"))
-
-	rawEvents, ok := c.Get(OpsUpstreamErrorsKey)
-	require.True(t, ok)
-	events, ok := rawEvents.([]*OpsUpstreamErrorEvent)
-	require.True(t, ok)
-	require.Len(t, events, 1)
-	require.Equal(t, "failover", events[0].Kind)
-	require.Equal(t, "req_h2_read_failure", events[0].UpstreamRequestID)
-	require.Equal(t, "Upstream HTTP/2 stream failed", events[0].Message)
+	require.False(t, errors.As(err, &failoverErr))
+	require.ErrorIs(t, err, readErr)
+	require.True(t, c.GetBool(OpsImageDeliveryFailedKey))
+	require.Equal(t, "true", c.Writer.Header().Get(OpenAIImagesDeliveryFailureHeader))
+	require.Equal(t, http.StatusOK, c.GetInt(OpsUpstreamStatusCodeKey))
 }
 
 func TestOpenAIImagesOAuthNonStreamingSuccessWritesPrivateImageLog(t *testing.T) {

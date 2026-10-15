@@ -255,7 +255,7 @@ func (d *openAIImageJobDispatcher) RunOnce(ctx context.Context) error {
 	if d.store.isCanceled(job.ID) {
 		return d.queue.Ack(context.WithoutCancel(ctx), job.ID)
 	}
-	if ctx.Err() != nil {
+	if ctx.Err() != nil && !result.deliveryFailed && result.statusCode == 0 {
 		next := time.Now()
 		d.store.markPendingForRetry(job.ID, next, false)
 		return d.queue.RequeueAfter(context.Background(), job.ID, 0)
@@ -276,6 +276,7 @@ func (d *openAIImageJobDispatcher) finishAttempt(ctx context.Context, job *openA
 			return d.queue.Ack(ctx, job.ID)
 		}
 		result.err = err
+		result.deliveryFailed = true
 	}
 
 	message := strings.TrimSpace(string(result.body))
@@ -285,6 +286,13 @@ func (d *openAIImageJobDispatcher) finishAttempt(ctx context.Context, job *openA
 	}
 	if message == "" {
 		message = http.StatusText(result.statusCode)
+	}
+	if result.deliveryFailed {
+		// Upstream already returned a successful response. A fresh queue
+		// attempt would repeat paid generation instead of retrying delivery.
+		message = "Upstream returned a successful response, but the relay could not finish image delivery; automatic regeneration was skipped"
+		errorType = openAIImageJobErrorDelivery
+		retryable = false
 	}
 	localCapacity := isRetryableLocalImageJobCapacity(result.statusCode, message)
 	if localCapacity {

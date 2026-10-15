@@ -1117,7 +1117,7 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 				parsed = terminal
 			}
 		}
-		if status < 400 {
+		if status < 400 && !c.GetBool(service.OpsImageDeliveryFailedKey) {
 			if parsed.StreamFailure {
 				status = inferStreamFailureStatus(c, parsed)
 			} else {
@@ -1253,6 +1253,14 @@ func OpsErrorLoggerMiddleware(ops *service.OpsService) gin.HandlerFunc {
 			}
 		}
 		suppressOpsUpstreamAttributionForLocalModelConfiguration(c, entry)
+		if c.GetBool(service.OpsImageDeliveryFailedKey) {
+			entry.ErrorPhase = "delivery"
+			entry.ErrorType = "image_delivery_failed"
+			entry.Severity = classifyOpsSeverity(entry.ErrorType, http.StatusBadGateway)
+			entry.ErrorSource = "gateway"
+			entry.ErrorOwner = "platform"
+			entry.IsBusinessLimited = false
+		}
 
 		if apiKey != nil {
 			entry.APIKeyID = &apiKey.ID

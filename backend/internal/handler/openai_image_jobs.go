@@ -46,6 +46,7 @@ const (
 	openAIImageJobErrorClientCanceled = "client_canceled"
 	openAIImageJobErrorNetwork        = "network_error"
 	openAIImageJobErrorInternal       = "internal_error"
+	openAIImageJobErrorDelivery       = "image_delivery_failed"
 
 	defaultOpenAIImageJobRetentionDays = 30
 	defaultOpenAIImageJobTimeout       = 30 * time.Minute
@@ -103,12 +104,13 @@ type openAIImageJobRequest struct {
 var errOpenAIImageJobQueueCapacity = errors.New("openai image job durable queue capacity exceeded")
 
 type openAIImageJobResult struct {
-	statusCode   int
-	contentType  string
-	body         []byte
-	resultStored bool
-	resultBytes  int64
-	err          error
+	statusCode     int
+	contentType    string
+	body           []byte
+	deliveryFailed bool
+	resultStored   bool
+	resultBytes    int64
+	err            error
 }
 
 func newOpenAIImageJobStore(cfg *config.Config) *openAIImageJobStore {
@@ -447,6 +449,9 @@ func (h *OpenAIGatewayHandler) runImageJob(jobID string, endpoint string, body [
 	}
 	if result.err != nil {
 		errorType, retryable := classifyOpenAIImageJobFailure(result.statusCode, "", result.err)
+		if result.deliveryFailed {
+			errorType, retryable = openAIImageJobErrorDelivery, false
+		}
 		h.imageJobStore.markFailed(jobID, finished, result.statusCode, result.err.Error(), errorType, retryable)
 		logger.L().With(zap.String("component", "handler.openai_gateway.image_jobs")).Warn(
 			"openai.image_job.failed",
@@ -464,6 +469,9 @@ func (h *OpenAIGatewayHandler) runImageJob(jobID string, endpoint string, body [
 			msg = http.StatusText(result.statusCode)
 		}
 		errorType, retryable := classifyOpenAIImageJobFailure(result.statusCode, msg, nil)
+		if result.deliveryFailed {
+			errorType, retryable = openAIImageJobErrorDelivery, false
+		}
 		h.imageJobStore.markFailed(jobID, finished, result.statusCode, msg, errorType, retryable)
 		return
 	}
@@ -477,8 +485,7 @@ func (h *OpenAIGatewayHandler) runImageJob(jobID string, endpoint string, body [
 		if h.imageJobStore.isCanceled(jobID) {
 			return
 		}
-		errorType, retryable := classifyOpenAIImageJobFailure(0, "", saveErr)
-		h.imageJobStore.markFailed(jobID, finished, 0, saveErr.Error(), errorType, retryable)
+		h.imageJobStore.markFailed(jobID, finished, result.statusCode, saveErr.Error(), openAIImageJobErrorDelivery, false)
 		return
 	}
 	h.imageJobStore.cleanupExpired()
@@ -512,11 +519,11 @@ func (h *OpenAIGatewayHandler) forwardImageJob(ctx context.Context, jobID string
 	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		if h.imageJobStore == nil {
-			return openAIImageJobResult{statusCode: resp.StatusCode, err: errors.New("image job store is not available")}
+			return openAIImageJobResult{statusCode: resp.StatusCode, err: errors.New("image job store is not available"), deliveryFailed: true}
 		}
 		resultBytes, writeErr := h.imageJobStore.stageResult(jobID, resp.Body, openAIImageJobResultReadLimit(h.cfg))
 		if writeErr != nil {
-			return openAIImageJobResult{statusCode: resp.StatusCode, err: writeErr}
+			return openAIImageJobResult{statusCode: resp.StatusCode, err: writeErr, deliveryFailed: true}
 		}
 		return openAIImageJobResult{
 			statusCode:   resp.StatusCode,
@@ -534,9 +541,10 @@ func (h *OpenAIGatewayHandler) forwardImageJob(ctx context.Context, jobID string
 		respBody = respBody[:openAIImageJobErrorBodyLimit]
 	}
 	return openAIImageJobResult{
-		statusCode:  resp.StatusCode,
-		contentType: contentType,
-		body:        respBody,
+		statusCode:     resp.StatusCode,
+		contentType:    contentType,
+		body:           respBody,
+		deliveryFailed: strings.EqualFold(resp.Header.Get(service.OpenAIImagesDeliveryFailureHeader), "true"),
 	}
 }
 
@@ -1274,7 +1282,8 @@ func normalizeOpenAIImageJobErrorType(errorType string) string {
 		openAIImageJobErrorJobTimeout,
 		openAIImageJobErrorClientCanceled,
 		openAIImageJobErrorNetwork,
-		openAIImageJobErrorInternal:
+		openAIImageJobErrorInternal,
+		openAIImageJobErrorDelivery:
 		return strings.TrimSpace(errorType)
 	default:
 		return openAIImageJobErrorUnknown

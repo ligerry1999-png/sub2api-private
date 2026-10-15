@@ -26,6 +26,9 @@ import (
 
 const (
 	openAIImagesResultDeliveryFileURL = "file_url"
+	// OpenAIImagesDeliveryFailureHeader lets the internal async worker distinguish
+	// a failed local delivery after upstream success from a retryable generation error.
+	OpenAIImagesDeliveryFailureHeader = "X-Sub2API-Image-Delivery-Failed"
 	openAIImagesPublicFilesPrefix     = "/image-files"
 )
 
@@ -1634,6 +1637,9 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthNonStreamingResponse(
 ) (OpenAIUsage, int, []string, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
+		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+			recordOpenAIImagesPostUpstreamDeliveryFailure(c, account, resp, err)
+		}
 		if shouldClassifyOpenAIUpstreamStreamReadError(err, c.Request.Context()) {
 			err = newOpenAIUpstreamStreamReadError(err)
 		}
@@ -1682,6 +1688,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthNonStreamingResponse(
 
 	responseBody, err := buildOpenAIImagesAPIResponseWithDelivery(results, createdAt, usageRaw, firstMeta, responseFormat, s.openAIImagesResultDeliveryOptions(c, parsed, account))
 	if err != nil {
+		recordOpenAIImagesPostUpstreamDeliveryFailure(c, account, resp, err)
 		return OpenAIUsage{}, 0, nil, err
 	}
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)
@@ -2506,6 +2513,9 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthResponseError(
 	writerSizeBeforeResponse int,
 	err error,
 ) error {
+	if c != nil && c.GetBool(OpsImageDeliveryFailedKey) {
+		return err
+	}
 	responseWritten := c != nil && c.Writer != nil && OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeResponse
 	if code, message, ok := OpenAIUpstreamStreamReadErrorDetails(err); ok {
 		// A body transport failure after a successful HTTP status is retryable only

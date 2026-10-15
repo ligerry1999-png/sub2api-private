@@ -131,7 +131,7 @@ func TestBackfillOpenAIImagesB64JSON(t *testing.T) {
 			body:          `{"created":1,"data":[{"url":"https://cdn.example.com/a.png"}]}`,
 			upstream:      &httpUpstreamRecorder{resp: b64BackfillImageResponse(http.StatusNotFound, "text/plain", []byte("gone"))},
 			wantB64:       []string{""},
-			wantDownloads: 1,
+			wantDownloads: openAIImageURLDownloadMaxAttempts,
 		},
 		{
 			name:          "下载内容不是图片时保留原样",

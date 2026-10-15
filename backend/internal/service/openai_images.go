@@ -23,9 +23,11 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/imroc/req/v3"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+	"go.uber.org/zap"
 )
 
 const (
@@ -675,10 +677,27 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
+	attemptID := uuid.NewString()
+	imageJobID := safeImageJobID(c)
+	attemptLog := logger.FromContext(c.Request.Context())
+	attemptLog.Info("openai.images.upstream_attempt_started",
+		zap.String("upstream_attempt_id", attemptID),
+		zap.String("image_job_id", imageJobID),
+		zap.Int64("account_id", account.ID),
+		zap.String("endpoint", parsed.Endpoint),
+	)
 	upstreamStart := time.Now()
 	resp, err := s.doOpenAIUpstream(upstreamReq, proxyURL, account)
-	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
+	upstreamDuration := time.Since(upstreamStart)
+	SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, upstreamDuration.Milliseconds())
 	if err != nil {
+		attemptLog.Warn("openai.images.upstream_attempt_completed",
+			zap.String("upstream_attempt_id", attemptID),
+			zap.String("image_job_id", imageJobID),
+			zap.Int64("account_id", account.ID),
+			zap.String("outcome", "transport_error"),
+			zap.Int64("duration_ms", upstreamDuration.Milliseconds()),
+		)
 		safeErr := sanitizeUpstreamErrorMessage(err.Error())
 		setOpsUpstreamError(c, 0, safeErr, "")
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -694,6 +713,15 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 		})
 		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
 	}
+	attemptLog.Info("openai.images.upstream_attempt_completed",
+		zap.String("upstream_attempt_id", attemptID),
+		zap.String("image_job_id", imageJobID),
+		zap.Int64("account_id", account.ID),
+		zap.String("outcome", "http_response"),
+		zap.Int("upstream_status_code", resp.StatusCode),
+		zap.String("upstream_request_id", resp.Header.Get("x-request-id")),
+		zap.Int64("duration_ms", upstreamDuration.Milliseconds()),
+	)
 	if resp.StatusCode >= 400 {
 		respBody := s.readUpstreamErrorBody(resp)
 		_ = resp.Body.Close()
@@ -995,11 +1023,15 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 ) (OpenAIUsage, int, []string, []ImageLogResult, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
+		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+			recordOpenAIImagesPostUpstreamDeliveryFailure(c, account, resp, err)
+		}
 		return OpenAIUsage{}, 0, nil, nil, err
 	}
 	if delivery := s.openAIImagesResultDeliveryOptions(c, parsed, account); delivery != nil {
 		body, err = applyOpenAIImagesFileURLDelivery(body, delivery)
 		if err != nil {
+			recordOpenAIImagesPostUpstreamDeliveryFailure(c, account, resp, err)
 			return OpenAIUsage{}, 0, nil, nil, err
 		}
 	} else {
@@ -1016,6 +1048,31 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 
 	usage, _ := extractOpenAIUsageFromJSONBytes(body)
 	return usage, extractOpenAIImageCountFromJSONBytes(body), collectOpenAIResponseImageOutputSizesFromJSONBytes(body), extractOpenAIImageLogResultsFromJSONBytes(body), nil
+}
+
+func recordOpenAIImagesPostUpstreamDeliveryFailure(c *gin.Context, account *Account, resp *http.Response, err error) {
+	if c == nil || err == nil {
+		return
+	}
+	c.Header(OpenAIImagesDeliveryFailureHeader, "true")
+	c.Set(OpsImageDeliveryFailedKey, true)
+	accountID := int64(0)
+	if account != nil {
+		accountID = account.ID
+	}
+	upstreamStatus, upstreamRequestID := 0, ""
+	if resp != nil {
+		upstreamStatus = resp.StatusCode
+		upstreamRequestID = resp.Header.Get("x-request-id")
+		c.Set(OpsUpstreamStatusCodeKey, upstreamStatus)
+	}
+	logger.FromContext(c.Request.Context()).Warn("openai.images.post_upstream_delivery_failed",
+		zap.Int64("account_id", accountID),
+		zap.String("image_job_id", safeImageJobID(c)),
+		zap.Int("upstream_status_code", upstreamStatus),
+		zap.String("upstream_request_id", upstreamRequestID),
+		zap.Error(err),
+	)
 }
 
 func extractOpenAIImageLogResultsFromJSONBytes(body []byte) []ImageLogResult {
