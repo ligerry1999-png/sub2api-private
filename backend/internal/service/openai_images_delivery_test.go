@@ -45,6 +45,53 @@ func TestOpenAIImagesFileURLDeliveryWritesPublicImage(t *testing.T) {
 	require.Equal(t, png, saved)
 }
 
+func TestOpenAIImagesFileURLDeliveryAcceptsPaddedDataURL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, tt := range []struct {
+		name string
+		png  []byte
+	}{
+		{name: "one padding character", png: []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}},
+		{name: "two padding characters", png: []byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			service := &OpenAIGatewayService{
+				cfg:          &config.Config{Pricing: config.PricingConfig{DataDir: dataDir}},
+				httpUpstream: &httpUpstreamRecorder{},
+			}
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "https://sub2api.example/v1/images/edits", nil)
+			ctx.Request.Host = "sub2api.example"
+			ctx.Request.Header.Set("X-Sub2API-Image-Job-ID", "imgjob_padded_data_url")
+			ctx.Request.Header.Set("X-Image-Result-Delivery", "file_url")
+			parsed := &OpenAIImagesRequest{ResponseFormat: "url"}
+			account := &Account{ID: 7, Concurrency: 2}
+			dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(tt.png)
+			response := &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body: io.NopCloser(strings.NewReader(
+					`{"created":123,"data":[{"url":"` + dataURL + `"}]}`,
+				)),
+			}
+
+			_, imageCount, _, _, err := service.handleOpenAIImagesNonStreamingResponse(
+				context.Background(), response, ctx, account, parsed,
+			)
+			require.NoError(t, err)
+			require.Equal(t, 1, imageCount)
+			publicURL := gjson.GetBytes(recorder.Body.Bytes(), "data.0.url").String()
+			require.True(t, strings.HasPrefix(publicURL, "https://sub2api.example/image-files/image_jobs/imgjob_padded_data_url/public/"), publicURL)
+			rel := strings.TrimPrefix(publicURL, "https://sub2api.example/image-files/")
+			saved, err := os.ReadFile(filepath.Join(dataDir, filepath.FromSlash(rel)))
+			require.NoError(t, err)
+			require.Equal(t, tt.png, saved)
+		})
+	}
+}
+
 func TestOpenAIImagesFileURLDeliveryDownloadsUpstreamImage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	png := append([]byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}, make([]byte, 32)...)
