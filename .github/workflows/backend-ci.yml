@@ -41,7 +41,7 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.27.0'
+          go version | grep -q 'go1.27.2'
       - name: Verify generated Wire dependencies
         working-directory: backend
         run: |
@@ -86,13 +86,12 @@ jobs:
           cache-dependency-path: backend/go.sum
       - name: Verify Go version
         run: |
-          go version | grep -q 'go1.27.0'
+          go version | grep -q 'go1.27.2'
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v9
-        with:
-          version: v2.13
-          args: --timeout=30m
-          working-directory: backend
+        working-directory: backend
+        run: |
+          go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 version
+          go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run --timeout=30m
 
   release-helpers:
     runs-on: ubuntu-latest
