@@ -212,6 +212,9 @@ func (s *OpenAIGatewayService) handleCodexDirectImagesNonStreamingResponse(
 ) (OpenAIUsage, int, []string, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
+		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+			recordOpenAIImagesPostUpstreamDeliveryFailure(c, nil, resp, err)
+		}
 		if shouldClassifyOpenAIUpstreamStreamReadError(err) {
 			err = newOpenAIUpstreamStreamReadError(err)
 		}

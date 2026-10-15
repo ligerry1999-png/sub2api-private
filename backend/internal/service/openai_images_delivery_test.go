@@ -264,6 +264,21 @@ func TestOpenAIImagesFileURLDeliveryFailureMarksPostUpstreamFailure(t *testing.T
 	require.Equal(t, http.StatusOK, status)
 }
 
+func TestOpenAIImagesSuccessfulUpstreamBodyReadFailureStopsRegeneration(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	resp := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: errReadCloser{err: io.ErrUnexpectedEOF}}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}}
+	_, _, _, _, err := svc.handleOpenAIImagesNonStreamingResponse(context.Background(), resp, ctx, b64BackfillAccount(false), &OpenAIImagesRequest{})
+	require.Error(t, err)
+	require.True(t, ctx.GetBool(OpsImageDeliveryFailedKey))
+	require.Equal(t, "true", ctx.Writer.Header().Get(OpenAIImagesDeliveryFailureHeader))
+
+	readErr := newOpenAIUpstreamStreamReadError(io.ErrUnexpectedEOF)
+	require.ErrorIs(t, svc.handleOpenAIImagesOAuthResponseError(context.Background(), ctx, b64BackfillAccount(false), "gpt-image-2", "", resp, 0, readErr), readErr)
+}
+
 func TestOpenAIImagesAPIKeyResponseUsesFileURLDelivery(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	png := append([]byte{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a}, make([]byte, 32)...)

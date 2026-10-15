@@ -288,9 +288,9 @@ func (d *openAIImageJobDispatcher) finishAttempt(ctx context.Context, job *openA
 		message = http.StatusText(result.statusCode)
 	}
 	if result.deliveryFailed {
-		// Upstream already returned an image payload or URL. A fresh queue
+		// Upstream already returned a successful response. A fresh queue
 		// attempt would repeat paid generation instead of retrying delivery.
-		message = "Upstream returned an image, but the relay could not deliver it; automatic regeneration was skipped"
+		message = "Upstream returned a successful response, but the relay could not finish image delivery; automatic regeneration was skipped"
 		errorType = openAIImageJobErrorDelivery
 		retryable = false
 	}

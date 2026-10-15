@@ -1637,6 +1637,9 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthNonStreamingResponse(
 ) (OpenAIUsage, int, []string, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
+		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+			recordOpenAIImagesPostUpstreamDeliveryFailure(c, account, resp, err)
+		}
 		if shouldClassifyOpenAIUpstreamStreamReadError(err, c.Request.Context()) {
 			err = newOpenAIUpstreamStreamReadError(err)
 		}
@@ -2510,6 +2513,9 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthResponseError(
 	writerSizeBeforeResponse int,
 	err error,
 ) error {
+	if c != nil && c.GetBool(OpsImageDeliveryFailedKey) {
+		return err
+	}
 	responseWritten := c != nil && c.Writer != nil && OpenAIImagesJSONKeepaliveAdjustedWrittenSize(c) != writerSizeBeforeResponse
 	if code, message, ok := OpenAIUpstreamStreamReadErrorDetails(err); ok {
 		// A body transport failure after a successful HTTP status is retryable only

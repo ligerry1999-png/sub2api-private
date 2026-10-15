@@ -1023,6 +1023,9 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 ) (OpenAIUsage, int, []string, []ImageLogResult, error) {
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
+		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+			recordOpenAIImagesPostUpstreamDeliveryFailure(c, account, resp, err)
+		}
 		return OpenAIUsage{}, 0, nil, nil, err
 	}
 	if delivery := s.openAIImagesResultDeliveryOptions(c, parsed, account); delivery != nil {
