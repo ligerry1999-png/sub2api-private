@@ -131,7 +131,7 @@ assert_contains "$grok_oauth" "func (s *GrokOAuthService) passwordAuthEnabled() 
 assert_contains "$grok_oauth" "return false"
 
 assert_contains "backend/go.mod" "golang.org/x/image v0.45.0"
-assert_contains "backend/go.mod" "golang.org/x/text v0.42.0"
+assert_contains "backend/go.mod" "golang.org/x/text v0.43.0"
 
 # 私有化全渠道图片日志：官方版本升级时这些符号和入口必须继续存在。
 # 这些检查不是文档约定，而是升级后会直接失败的门禁，避免新增渠道再次
