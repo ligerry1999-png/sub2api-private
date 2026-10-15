@@ -331,6 +331,54 @@ func TestOpsErrorLoggerMiddleware_OrdinaryPermissionStillRecords(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, job.entry.StatusCode)
 }
 
+func TestOpsErrorLoggerMiddleware_SeparatesPostUpstreamImageDeliveryFailure(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 2)
+	gin.SetMode(gin.TestMode)
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(ops))
+	router.POST("/v1/images/generations", func(c *gin.Context) {
+		c.Set(service.OpsImageDeliveryFailedKey, true)
+		c.Set(service.OpsUpstreamStatusCodeKey, http.StatusOK)
+		c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"type": "upstream_error", "message": "Upstream request failed"}})
+	})
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil))
+	require.Equal(t, int64(1), OpsErrorLogQueueLength())
+	job := <-opsErrorLogQueue
+	require.Equal(t, http.StatusBadGateway, job.entry.StatusCode)
+	require.NotNil(t, job.entry.UpstreamStatusCode)
+	require.Equal(t, http.StatusOK, *job.entry.UpstreamStatusCode)
+	require.Equal(t, "delivery", job.entry.ErrorPhase)
+	require.Equal(t, "image_delivery_failed", job.entry.ErrorType)
+	require.Equal(t, "gateway", job.entry.ErrorSource)
+}
+
+func TestOpsErrorLoggerMiddleware_RecordsDeliveryFailureAfterKeepaliveCommitted200(t *testing.T) {
+	setupOpsErrorLogTestQueue(t, 2)
+	gin.SetMode(gin.TestMode)
+	ops := service.NewOpsService(nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	router := gin.New()
+	router.Use(OpsErrorLoggerMiddleware(ops))
+	router.POST("/v1/images/generations", func(c *gin.Context) {
+		c.Set(service.OpsImageDeliveryFailedKey, true)
+		c.Set(service.OpsUpstreamStatusCodeKey, http.StatusOK)
+		c.Writer.WriteHeader(http.StatusOK)
+		_, _ = c.Writer.Write([]byte(" \n"))
+		_, _ = c.Writer.Write([]byte(`{"error":{"message":"image delivery failed"}}`))
+	})
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, int64(1), OpsErrorLogQueueLength())
+	job := <-opsErrorLogQueue
+	require.Equal(t, http.StatusOK, job.entry.StatusCode)
+	require.Equal(t, "delivery", job.entry.ErrorPhase)
+	require.Equal(t, "image_delivery_failed", job.entry.ErrorType)
+	require.NotNil(t, job.entry.UpstreamStatusCode)
+	require.Equal(t, http.StatusOK, *job.entry.UpstreamStatusCode)
+}
+
 func TestOpsErrorLoggerMiddleware_RecordsRecoveredUpstreamTelemetryOutsideFailureSLA(t *testing.T) {
 	setupOpsErrorLogTestQueue(t, 2)
 	gin.SetMode(gin.TestMode)

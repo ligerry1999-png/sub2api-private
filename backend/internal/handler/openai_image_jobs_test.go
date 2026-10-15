@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -51,6 +52,33 @@ func TestForwardImageJobForcesFileURLDelivery(t *testing.T) {
 	forwarded := <-receivedHeaders
 	require.Equal(t, jobID, forwarded.Get("X-Sub2API-Image-Job-ID"))
 	require.Equal(t, "file_url", forwarded.Get("X-Image-Result-Delivery"))
+}
+
+func TestForwardImageJobPreservesPostUpstreamDeliveryFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Sub2API-Image-Delivery-Failed", "true")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":"image delivery failed"}`))
+	}))
+	defer server.Close()
+	cfg := durableImageJobTestConfig(t.TempDir(), 10, 1<<20)
+	addr, ok := server.Listener.Addr().(*net.TCPAddr)
+	require.True(t, ok)
+	cfg.Server.Port = addr.Port
+	h := &OpenAIGatewayHandler{cfg: cfg}
+	result := h.forwardImageJob(context.Background(), "imgjob_delivery_failed", "/v1/images/generations", []byte(`{}`), nil, 5*time.Second)
+	require.Equal(t, http.StatusBadGateway, result.statusCode)
+	require.True(t, result.deliveryFailed)
+}
+
+func TestInternalImageJobDoesNotCommitKeepalive200(t *testing.T) {
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	parsed := &service.OpenAIImagesRequest{}
+	require.True(t, shouldStartOpenAIImagesJSONKeepalive(ctx, parsed, false))
+
+	ctx.Request.Header.Set("X-Sub2API-Image-Job-ID", "imgjob_delivery_failure")
+	require.False(t, shouldStartOpenAIImagesJSONKeepalive(ctx, parsed, false))
 }
 
 func TestServeImageJobPublicFile(t *testing.T) {

@@ -122,6 +122,47 @@ func TestOpenAIImageJobDispatcherFailsPermanent400WithoutRetry(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
+func TestOpenAIImageJobDispatcherDoesNotRegenerateAfterDeliveryFailure(t *testing.T) {
+	store, queue, dispatcher, cleanup := newOpenAIImageJobDispatcherTest(t, 2)
+	defer cleanup()
+	job := enqueueFakeOpenAIImageJob(t, store, queue, "imgjob_delivery_failed")
+	var executions atomic.Int64
+	dispatcher.execute = func(context.Context, *openAIImageJob, *openAIImageJobRequest) openAIImageJobResult {
+		executions.Add(1)
+		return openAIImageJobResult{statusCode: http.StatusBadGateway, deliveryFailed: true, body: []byte("image delivery failed")}
+	}
+	require.NoError(t, dispatcher.RunOnce(context.Background()))
+	failed, ok := store.get(job.ID)
+	require.True(t, ok)
+	require.Equal(t, openAIImageJobStatusFailed, failed.Status)
+	require.Equal(t, openAIImageJobErrorDelivery, failed.ErrorType)
+	require.NotNil(t, failed.Retryable)
+	require.False(t, *failed.Retryable)
+	require.EqualValues(t, 1, executions.Load())
+	requireOpenAIImageJobQueueEmpty(t, queue)
+}
+
+func TestOpenAIImageJobDispatcherDoesNotRegenerateWhenSavingSuccessfulResponseFails(t *testing.T) {
+	store, queue, dispatcher, cleanup := newOpenAIImageJobDispatcherTest(t, 2)
+	defer cleanup()
+	job := enqueueFakeOpenAIImageJob(t, store, queue, "imgjob_save_failed")
+	require.NoError(t, os.Mkdir(filepath.Join(store.jobDir(job.ID), "result.json"), 0o700))
+	var executions atomic.Int64
+	dispatcher.execute = func(context.Context, *openAIImageJob, *openAIImageJobRequest) openAIImageJobResult {
+		executions.Add(1)
+		return successfulFakeOpenAIImageJobResult()
+	}
+	require.NoError(t, dispatcher.RunOnce(context.Background()))
+	failed, ok := store.get(job.ID)
+	require.True(t, ok)
+	require.Equal(t, openAIImageJobStatusFailed, failed.Status)
+	require.Equal(t, openAIImageJobErrorDelivery, failed.ErrorType)
+	require.NotNil(t, failed.Retryable)
+	require.False(t, *failed.Retryable)
+	require.EqualValues(t, 1, executions.Load())
+	requireOpenAIImageJobQueueEmpty(t, queue)
+}
+
 func TestOpenAIImageJobDispatcherPeakObeysSimulatedUserAndAccountSlots(t *testing.T) {
 	const jobCount = 60
 	tests := []struct {

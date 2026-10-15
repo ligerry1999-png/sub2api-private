@@ -26,6 +26,9 @@ import (
 
 const (
 	openAIImagesResultDeliveryFileURL = "file_url"
+	// OpenAIImagesDeliveryFailureHeader lets the internal async worker distinguish
+	// a failed local delivery after upstream success from a retryable generation error.
+	OpenAIImagesDeliveryFailureHeader = "X-Sub2API-Image-Delivery-Failed"
 	openAIImagesPublicFilesPrefix     = "/image-files"
 )
 
@@ -1682,6 +1685,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesOAuthNonStreamingResponse(
 
 	responseBody, err := buildOpenAIImagesAPIResponseWithDelivery(results, createdAt, usageRaw, firstMeta, responseFormat, s.openAIImagesResultDeliveryOptions(c, parsed, account))
 	if err != nil {
+		recordOpenAIImagesPostUpstreamDeliveryFailure(c, account, resp, err)
 		return OpenAIUsage{}, 0, nil, err
 	}
 	responseheaders.WriteFilteredHeaders(c.Writer.Header(), resp.Header, s.responseHeaderFilter)

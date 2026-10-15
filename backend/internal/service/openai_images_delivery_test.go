@@ -7,14 +7,17 @@ import (
 	"errors"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -162,6 +165,103 @@ func TestOpenAIImagesFileURLDeliveryUsesGatewayDownloader(t *testing.T) {
 	publicURL := gjson.GetBytes(body, "data.0.url").String()
 	require.True(t, strings.HasPrefix(publicURL, "https://sub2api.example/image-files/image_jobs/imgjob_gateway/public/"), publicURL)
 	require.NotContains(t, string(body), result.URL)
+}
+
+type imageDownloadSequenceUpstream struct {
+	requests  []*http.Request
+	responses []*http.Response
+	errs      []error
+}
+
+func (u *imageDownloadSequenceUpstream) Do(req *http.Request, _ string, _ int64, _ int) (*http.Response, error) {
+	u.requests = append(u.requests, req)
+	if len(u.errs) > 0 {
+		err := u.errs[0]
+		u.errs = u.errs[1:]
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(u.responses) == 0 {
+		return nil, errors.New("unexpected extra image download")
+	}
+	response := u.responses[0]
+	u.responses = u.responses[1:]
+	return response, nil
+}
+
+func (u *imageDownloadSequenceUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, _ *tlsfingerprint.Profile) (*http.Response, error) {
+	return u.Do(req, proxyURL, accountID, accountConcurrency)
+}
+
+func TestImageURLDownloadRetriesSameURLAfterConnectionRefused(t *testing.T) {
+	upstream := &imageDownloadSequenceUpstream{
+		errs: []error{&net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}},
+		responses: []*http.Response{
+			b64BackfillImageResponse(http.StatusOK, "image/png", b64BackfillPNGBytes),
+		},
+	}
+	svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+	const imageURL = "https://cdn.example.com/image.png?signature=private"
+	got, err := svc.fetchOpenAIImageURLBytes(context.Background(), b64BackfillAccount(true), imageURL)
+	require.NoError(t, err)
+	require.Equal(t, b64BackfillPNGBytes, got)
+	require.Len(t, upstream.requests, 2)
+	for _, request := range upstream.requests {
+		require.Equal(t, http.MethodGet, request.Method)
+		require.Equal(t, imageURL, request.URL.String())
+	}
+}
+
+func TestImageURLDownloadRetries404ButNot401(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		status    int
+		wantCalls int
+		wantErr   bool
+	}{
+		{name: "temporary 404", status: http.StatusNotFound, wantCalls: 2},
+		{name: "401 needs authorization", status: http.StatusUnauthorized, wantCalls: 1, wantErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			upstream := &imageDownloadSequenceUpstream{responses: []*http.Response{
+				b64BackfillImageResponse(tt.status, "text/plain", []byte("not ready")),
+				b64BackfillImageResponse(http.StatusOK, "image/png", b64BackfillPNGBytes),
+			}}
+			svc := &OpenAIGatewayService{cfg: &config.Config{}, httpUpstream: upstream}
+			got, err := svc.fetchOpenAIImageURLBytes(context.Background(), b64BackfillAccount(true), "https://cdn.example.com/image.png")
+			if tt.wantErr {
+				require.Error(t, err)
+				require.Nil(t, got)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, b64BackfillPNGBytes, got)
+			}
+			require.Len(t, upstream.requests, tt.wantCalls)
+		})
+	}
+}
+
+func TestOpenAIImagesFileURLDeliveryFailureMarksPostUpstreamFailure(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	upstream := &httpUpstreamRecorder{resp: b64BackfillImageResponse(http.StatusUnauthorized, "text/plain", []byte("unauthorized"))}
+	svc := &OpenAIGatewayService{cfg: &config.Config{Pricing: config.PricingConfig{DataDir: t.TempDir()}}, httpUpstream: upstream}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "https://sub2api.example/v1/images/generations", nil)
+	ctx.Request.Header.Set("X-Image-Result-Delivery", "file_url")
+	response := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"created":123,"data":[{"url":"https://cdn.example.com/image.png"}]}`)),
+	}
+	_, _, _, _, err := svc.handleOpenAIImagesNonStreamingResponse(context.Background(), response, ctx, b64BackfillAccount(true), &OpenAIImagesRequest{})
+	require.Error(t, err)
+	require.Equal(t, "true", recorder.Header().Get("X-Sub2API-Image-Delivery-Failed"))
+	require.True(t, ctx.GetBool(OpsImageDeliveryFailedKey))
+	status, ok := ctx.Get(OpsUpstreamStatusCodeKey)
+	require.True(t, ok)
+	require.Equal(t, http.StatusOK, status)
 }
 
 func TestOpenAIImagesAPIKeyResponseUsesFileURLDelivery(t *testing.T) {

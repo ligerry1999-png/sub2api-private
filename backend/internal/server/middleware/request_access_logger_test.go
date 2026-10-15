@@ -11,6 +11,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
 )
 
 type testLogSink struct {
@@ -198,6 +199,24 @@ func TestLogger_AccessLogIncludesCoreFields(t *testing.T) {
 	if !found {
 		t.Fatalf("access log event not found")
 	}
+}
+
+func TestLogger_ImageRequestIncludesSafeJobID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	sink := initMiddlewareTestLogger(t)
+	router := gin.New()
+	router.Use(Logger())
+	router.POST("/v1/images/generations", func(c *gin.Context) { c.Status(http.StatusBadGateway) })
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	req.Header.Set("X-Sub2API-Image-Job-ID", "imgjob_audit_123")
+	router.ServeHTTP(httptest.NewRecorder(), req)
+	require.Equal(t, "imgjob_audit_123", sink.list()[0].Fields["image_job_id"])
+
+	req = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	req.Header.Set("X-Sub2API-Image-Job-ID", "bad job")
+	router.ServeHTTP(httptest.NewRecorder(), req)
+	require.NotContains(t, sink.list()[1].Fields, "image_job_id")
 }
 
 func TestLogger_IngressRejectRemainsInStandardAccessLog(t *testing.T) {
