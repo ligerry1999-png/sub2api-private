@@ -48,6 +48,41 @@ func TestOpenAIImagesFileURLDeliveryWritesPublicImage(t *testing.T) {
 	require.Equal(t, png, saved)
 }
 
+func TestOpenAIImagesFileURLDeliveryRejectsSuccessfulResponsesWithoutImages(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, test := range []struct {
+		name      string
+		body      string
+		errorText string
+	}{
+		{name: "html gateway error", body: "<html><h1>502 Bad Gateway</h1></html>", errorText: "not valid JSON"},
+		{name: "json upstream error", body: `{"error":{"type":"upstream_error"}}`, errorText: "no image data"},
+		{name: "empty image list", body: `{"data":[]}`, errorText: "no image data"},
+		{name: "image item without result", body: `{"data":[{"revised_prompt":"cat"}]}`, errorText: "has no image"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			gateway := &OpenAIGatewayService{cfg: &config.Config{Pricing: config.PricingConfig{DataDir: t.TempDir()}}}
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "https://sub2api.example/v1/images/generations", nil)
+			ctx.Request.Header.Set("X-Image-Result-Delivery", "file_url")
+			ctx.Request.Header.Set("X-Sub2API-Image-Job-ID", "imgjob_invalid_response")
+			response := &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(test.body)),
+			}
+
+			_, _, _, _, err := gateway.handleOpenAIImagesNonStreamingResponse(
+				context.Background(), response, ctx, &Account{ID: 7}, &OpenAIImagesRequest{},
+			)
+			require.ErrorContains(t, err, test.errorText)
+			require.Equal(t, "true", ctx.Writer.Header().Get(OpenAIImagesDeliveryFailureHeader))
+			require.Empty(t, recorder.Body.String())
+		})
+	}
+}
+
 func TestOpenAIImagesFileURLDeliveryAcceptsPaddedDataURL(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tt := range []struct {
