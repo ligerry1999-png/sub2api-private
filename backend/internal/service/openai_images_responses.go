@@ -1174,15 +1174,18 @@ func applyOpenAIImagesFileURLDelivery(body []byte, delivery *openAIImagesResultD
 	if delivery == nil || delivery.Mode != openAIImagesResultDeliveryFileURL {
 		return body, nil
 	}
+	if !gjson.ValidBytes(body) {
+		return nil, fmt.Errorf("upstream image response is not valid JSON")
+	}
 	items := gjson.GetBytes(body, "data")
-	if !items.IsArray() {
-		return body, nil
+	if !items.IsArray() || len(items.Array()) == 0 {
+		return nil, fmt.Errorf("upstream image response has no image data")
 	}
 	createdAt := gjson.GetBytes(body, "created").Int()
 	for index, item := range items.Array() {
 		result, ok := imageLogResultFromJSON([]byte(item.Raw))
 		if !ok {
-			continue
+			return nil, fmt.Errorf("upstream image response data item %d has no image", index)
 		}
 		publicURL, err := saveOpenAIImageResultForPublicURL(result, createdAt, delivery)
 		if err != nil {
