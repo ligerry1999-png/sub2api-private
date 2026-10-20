@@ -1028,6 +1028,32 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 		}
 		return OpenAIUsage{}, 0, nil, nil, err
 	}
+	if transientOpenAIImagesBusinessFailure(body) {
+		// Some compatible providers return HTTP 200 with a service-unavailable
+		// error body and no image. No image was delivered, so this is an upstream
+		// attempt failure rather than a post-generation delivery failure.
+		const message = "upstream image service unavailable without image output"
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			ProxyID:            opsUpstreamProxyID(account),
+			ProxyName:          opsUpstreamProxyName(account),
+			Platform:           account.Platform,
+			AccountID:          account.ID,
+			AccountName:        account.Name,
+			UpstreamStatusCode: resp.StatusCode,
+			UpstreamRequestID:  resp.Header.Get("x-request-id"),
+			Kind:               "failover",
+			Message:            message,
+		})
+		logger.FromContext(c.Request.Context()).Warn("openai.images.upstream_business_failure",
+			zap.Int64("account_id", account.ID),
+			zap.String("image_job_id", safeImageJobID(c)),
+			zap.Int("upstream_status_code", resp.StatusCode),
+		)
+		return OpenAIUsage{}, 0, nil, nil, &UpstreamFailoverError{
+			StatusCode:   http.StatusServiceUnavailable,
+			ResponseBody: []byte(`{"error":{"type":"upstream_error","code":"upstream_result_missing","message":"upstream image service unavailable without image output"}}`),
+		}
+	}
 	if delivery := s.openAIImagesResultDeliveryOptions(c, parsed, account); delivery != nil {
 		body, err = applyOpenAIImagesFileURLDelivery(body, delivery)
 		if err != nil {
@@ -1048,6 +1074,37 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 
 	usage, _ := extractOpenAIUsageFromJSONBytes(body)
 	return usage, extractOpenAIImageCountFromJSONBytes(body), collectOpenAIResponseImageOutputSizesFromJSONBytes(body), extractOpenAIImageLogResultsFromJSONBytes(body), nil
+}
+
+func transientOpenAIImagesBusinessFailure(body []byte) bool {
+	if !gjson.ValidBytes(body) {
+		// A few compatible providers return the business error as short plain
+		// text despite advertising a successful HTTP status.
+		if len(body) > 4096 {
+			return false
+		}
+		text := strings.ToLower(strings.TrimSpace(string(body)))
+		return strings.Contains(text, "服务暂时不可用") ||
+			strings.Contains(text, "service temporarily unavailable")
+	}
+	if items := gjson.GetBytes(body, "data"); items.IsArray() && len(items.Array()) > 0 {
+		return false
+	}
+	code := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "error.code").String()))
+	if code == "" {
+		code = strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "code").String()))
+	}
+	switch code {
+	case "service_unavailable", "upstream_unavailable", "server_unavailable":
+		return true
+	}
+	message := strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "error.message").String()))
+	if message == "" {
+		message = strings.ToLower(strings.TrimSpace(gjson.GetBytes(body, "message").String()))
+	}
+	return strings.Contains(message, "服务暂时不可用") ||
+		strings.Contains(message, "service temporarily unavailable") ||
+		strings.Contains(message, "service unavailable")
 }
 
 func recordOpenAIImagesPostUpstreamDeliveryFailure(c *gin.Context, account *Account, resp *http.Response, err error) {
