@@ -83,6 +83,39 @@ func TestOpenAIImagesFileURLDeliveryRejectsSuccessfulResponsesWithoutImages(t *t
 	}
 }
 
+func TestOpenAIImagesHTTP200BusinessFailureCanFailOverWithoutDeliveryFlag(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, body := range []string{
+		`{"error":{"code":"service_unavailable","message":"服务暂时不可用"}}`,
+		`{"status_code":200,"message":"服务暂时不可用"}`,
+		`status_code=200, 服务暂时不可用`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			gateway := &OpenAIGatewayService{cfg: &config.Config{Pricing: config.PricingConfig{DataDir: t.TempDir()}}}
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "https://sub2api.example/v1/images/generations", nil)
+			ctx.Request.Header.Set("X-Image-Result-Delivery", "file_url")
+			response := &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}
+
+			_, _, _, _, err := gateway.handleOpenAIImagesNonStreamingResponse(
+				context.Background(), response, ctx, &Account{ID: 7}, &OpenAIImagesRequest{},
+			)
+			var failover *UpstreamFailoverError
+			require.ErrorAs(t, err, &failover)
+			require.Equal(t, http.StatusServiceUnavailable, failover.StatusCode)
+			require.Empty(t, ctx.Writer.Header().Get(OpenAIImagesDeliveryFailureHeader))
+			require.Empty(t, recorder.Body.String())
+		})
+	}
+	require.False(t, transientOpenAIImagesBusinessFailure([]byte(`{"data":[{"url":"https://example.com/image.png"}],"error":{"code":"service_unavailable"}}`)))
+	require.False(t, transientOpenAIImagesBusinessFailure([]byte(`{"error":{"code":"content_policy_violation"}}`)))
+}
+
 func TestOpenAIImagesFileURLDeliveryAcceptsPaddedDataURL(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, tt := range []struct {
