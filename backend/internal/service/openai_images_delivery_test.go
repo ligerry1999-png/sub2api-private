@@ -57,7 +57,7 @@ func TestOpenAIImagesFileURLDeliveryRejectsSuccessfulResponsesWithoutImages(t *t
 	}{
 		{name: "html gateway error", body: "<html><h1>502 Bad Gateway</h1></html>", errorText: "not valid JSON"},
 		{name: "json upstream error", body: `{"error":{"type":"upstream_error"}}`, errorText: "no image data"},
-		{name: "empty image list", body: `{"data":[]}`, errorText: "no image data"},
+		{name: "policy error with empty image list", body: `{"error":{"code":"content_policy_violation"},"data":[]}`, errorText: "no image data"},
 		{name: "image item without result", body: `{"data":[{"revised_prompt":"cat"}]}`, errorText: "has no image"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -81,6 +81,32 @@ func TestOpenAIImagesFileURLDeliveryRejectsSuccessfulResponsesWithoutImages(t *t
 			require.Empty(t, recorder.Body.String())
 		})
 	}
+}
+
+func TestOpenAIImagesHTTP200EmptyResultAllowsOneAccountSwitch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	gateway := &OpenAIGatewayService{cfg: &config.Config{Pricing: config.PricingConfig{DataDir: t.TempDir()}}}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "https://sub2api.example/v1/images/generations", nil)
+	ctx.Request.Header.Set("X-Image-Result-Delivery", "file_url")
+	response := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"created":123,"data":[]}`)),
+	}
+
+	_, _, _, _, err := gateway.handleOpenAIImagesNonStreamingResponse(
+		context.Background(), response, ctx, &Account{ID: 7}, &OpenAIImagesRequest{},
+	)
+	var failover *UpstreamFailoverError
+	require.ErrorAs(t, err, &failover)
+	require.Equal(t, 1, failover.MaxAccountSwitches)
+	require.Equal(t, "upstream_result_missing", gjson.GetBytes(failover.ResponseBody, "error.code").String())
+	require.Empty(t, ctx.Writer.Header().Get(OpenAIImagesDeliveryFailureHeader))
+	require.Empty(t, recorder.Body.String())
+	require.False(t, emptyOpenAIImagesResult([]byte(`{"data":[],"output":[{"type":"image"}]}`)))
+	require.False(t, emptyOpenAIImagesResult([]byte(`{"data":[],"status":"processing"}`)))
 }
 
 func TestOpenAIImagesHTTP200BusinessFailureCanFailOverWithoutDeliveryFlag(t *testing.T) {
@@ -137,6 +163,7 @@ func TestOpenAIImagesFileURLDeliveryAcceptsPaddedDataURL(t *testing.T) {
 			ctx.Request.Host = "sub2api.example"
 			ctx.Request.Header.Set("X-Sub2API-Image-Job-ID", "imgjob_padded_data_url")
 			ctx.Request.Header.Set("X-Image-Result-Delivery", "file_url")
+			ctx.Writer.Header().Set(OpenAIImagesDeliveryFailureHeader, "true")
 			parsed := &OpenAIImagesRequest{ResponseFormat: "url"}
 			account := &Account{ID: 7, Concurrency: 2}
 			dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(tt.png)
@@ -152,6 +179,7 @@ func TestOpenAIImagesFileURLDeliveryAcceptsPaddedDataURL(t *testing.T) {
 				context.Background(), response, ctx, account, parsed,
 			)
 			require.NoError(t, err)
+			require.Empty(t, recorder.Header().Get(OpenAIImagesDeliveryFailureHeader))
 			require.Equal(t, 1, imageCount)
 			publicURL := gjson.GetBytes(recorder.Body.Bytes(), "data.0.url").String()
 			require.True(t, strings.HasPrefix(publicURL, "https://sub2api.example/image-files/image_jobs/imgjob_padded_data_url/public/"), publicURL)

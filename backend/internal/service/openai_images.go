@@ -1024,7 +1024,7 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 	body, err := ReadUpstreamResponseBody(resp.Body, s.cfg, c, openAITooLargeError)
 	if err != nil {
 		if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
-			recordOpenAIImagesPostUpstreamDeliveryFailure(c, account, resp, err)
+			recordOpenAIImagesPostUpstreamDeliveryFailure(c, account, resp, err, nil)
 		}
 		return OpenAIUsage{}, 0, nil, nil, err
 	}
@@ -1054,10 +1054,35 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 			ResponseBody: []byte(`{"error":{"type":"upstream_error","code":"upstream_result_missing","message":"upstream image service unavailable without image output"}}`),
 		}
 	}
-	if delivery := s.openAIImagesResultDeliveryOptions(c, parsed, account); delivery != nil {
+	delivery := s.openAIImagesResultDeliveryOptions(c, parsed, account)
+	if delivery != nil && emptyOpenAIImagesResult(body) {
+		const message = "upstream returned no image output"
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			ProxyID:            opsUpstreamProxyID(account),
+			ProxyName:          opsUpstreamProxyName(account),
+			Platform:           account.Platform,
+			AccountID:          account.ID,
+			AccountName:        account.Name,
+			UpstreamStatusCode: resp.StatusCode,
+			UpstreamRequestID:  resp.Header.Get("x-request-id"),
+			Kind:               "failover",
+			Message:            message,
+		})
+		logger.FromContext(c.Request.Context()).Warn("openai.images.upstream_empty_result",
+			zap.Int64("account_id", account.ID),
+			zap.String("image_job_id", safeImageJobID(c)),
+			zap.Int("upstream_status_code", resp.StatusCode),
+		)
+		return OpenAIUsage{}, 0, nil, nil, &UpstreamFailoverError{
+			StatusCode:         http.StatusBadGateway,
+			ResponseBody:       []byte(`{"error":{"type":"upstream_error","code":"upstream_result_missing","message":"upstream returned no image output"}}`),
+			MaxAccountSwitches: 1,
+		}
+	}
+	if delivery != nil {
 		body, err = applyOpenAIImagesFileURLDelivery(body, delivery)
 		if err != nil {
-			recordOpenAIImagesPostUpstreamDeliveryFailure(c, account, resp, err)
+			recordOpenAIImagesPostUpstreamDeliveryFailure(c, account, resp, err, body)
 			return OpenAIUsage{}, 0, nil, nil, err
 		}
 	} else {
@@ -1070,10 +1095,29 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 			contentType = upstreamType
 		}
 	}
+	// A previous account may have returned no image. Remove the terminal
+	// retry-suppression marker once this account has delivered a real image.
+	c.Writer.Header().Del(OpenAIImagesDeliveryFailureHeader)
 	c.Data(resp.StatusCode, contentType, body)
 
 	usage, _ := extractOpenAIUsageFromJSONBytes(body)
 	return usage, extractOpenAIImageCountFromJSONBytes(body), collectOpenAIResponseImageOutputSizesFromJSONBytes(body), extractOpenAIImageLogResultsFromJSONBytes(body), nil
+}
+
+// An empty successful-looking JSON response has no deliverable image. Explicit
+// upstream errors and unknown job states remain delivery failures: their remote
+// generation state cannot be inferred from an empty image list.
+func emptyOpenAIImagesResult(body []byte) bool {
+	if !gjson.ValidBytes(body) ||
+		gjson.GetBytes(body, "error").Exists() ||
+		gjson.GetBytes(body, "status").Exists() ||
+		gjson.GetBytes(body, "output").Exists() ||
+		gjson.GetBytes(body, "images").Exists() ||
+		gjson.GetBytes(body, "result").Exists() {
+		return false
+	}
+	items := gjson.GetBytes(body, "data")
+	return items.IsArray() && len(items.Array()) == 0
 }
 
 func transientOpenAIImagesBusinessFailure(body []byte) bool {
@@ -1107,9 +1151,13 @@ func transientOpenAIImagesBusinessFailure(body []byte) bool {
 		strings.Contains(message, "service unavailable")
 }
 
-func recordOpenAIImagesPostUpstreamDeliveryFailure(c *gin.Context, account *Account, resp *http.Response, err error) {
+func recordOpenAIImagesPostUpstreamDeliveryFailure(c *gin.Context, account *Account, resp *http.Response, err error, bodies ...[]byte) {
 	if c == nil || err == nil {
 		return
+	}
+	var body []byte
+	if len(bodies) > 0 {
+		body = bodies[0]
 	}
 	c.Header(OpenAIImagesDeliveryFailureHeader, "true")
 	c.Set(OpsImageDeliveryFailedKey, true)
@@ -1128,6 +1176,12 @@ func recordOpenAIImagesPostUpstreamDeliveryFailure(c *gin.Context, account *Acco
 		zap.String("image_job_id", safeImageJobID(c)),
 		zap.Int("upstream_status_code", upstreamStatus),
 		zap.String("upstream_request_id", upstreamRequestID),
+		zap.Bool("upstream_json_valid", gjson.ValidBytes(body)),
+		zap.Bool("upstream_data_present", gjson.GetBytes(body, "data").Exists()),
+		zap.Bool("upstream_data_array", gjson.GetBytes(body, "data").IsArray()),
+		zap.Int("upstream_data_count", len(gjson.GetBytes(body, "data").Array())),
+		zap.Bool("upstream_has_error", gjson.GetBytes(body, "error").Exists()),
+		zap.Bool("upstream_has_status", gjson.GetBytes(body, "status").Exists()),
 		zap.Error(err),
 	)
 }

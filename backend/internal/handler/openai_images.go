@@ -353,6 +353,14 @@ func (h *OpenAIGatewayHandler) Images(c *gin.Context) {
 					failedAccountIDs[account.ID] = struct{}{}
 					lastFailoverErr = failoverErr
 					lastFailedAccountID = account.ID
+					if failoverErr.MaxAccountSwitches > 0 {
+						if failoverErr.MaxAccountSwitches < maxAccountSwitches {
+							maxAccountSwitches = failoverErr.MaxAccountSwitches
+						}
+						// The async queue must not start a fresh paid job after this
+						// bounded failover has already tried another account.
+						c.Header(service.OpenAIImagesDeliveryFailureHeader, "true")
+					}
 					if switchCount >= maxAccountSwitches {
 						h.handleFailoverExhausted(c, failoverErr, streamStarted)
 						return
