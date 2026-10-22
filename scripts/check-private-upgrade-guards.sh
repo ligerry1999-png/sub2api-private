@@ -115,6 +115,13 @@ assert_contains "$database_rehearsal" "232_add_usage_log_upstream_request_id.sql
 assert_contains "$database_rehearsal" "233_group_free_openai_fast.sql"
 assert_contains "$database_rehearsal" "234_group_codex_models_manifest_config.sql"
 assert_contains "$database_rehearsal" "validate_v021_migrations"
+assert_contains "$database_rehearsal" "validate_v0217_migrations"
+for migration in 242_drop_platform_check_constraints.sql 242_group_i18n.sql \
+  243_gemini_cached_contents.sql 244_gemini_cached_contents_channel_usage.sql \
+  245_gemini_cached_contents_mutation_lease.sql; do
+  test -f "backend/migrations/$migration" || fail "v0.2.17 migration missing: $migration"
+  assert_contains "$database_rehearsal" "$migration"
+done
 assert_contains "$database_rehearsal" "ImageLogService is a required Wire dependency"
 assert_contains "$database_rehearsal" "restore_production_dump"
 assert_contains "$database_rehearsal" "disable_mutating_background_jobs"
@@ -168,7 +175,7 @@ fi
 test "$actual_migration_sha" = "$expected_migration_sha" || \
   fail "backend/migrations/136_image_logs.sql checksum changed"
 
-test "$(tr -d '\r\n' < backend/cmd/server/VERSION)" = "0.2.14-private.1" || \
+test "$(tr -d '\r\n' < backend/cmd/server/VERSION)" = "0.2.17-private.1" || \
   fail "private version marker changed unexpectedly"
 
 printf 'private upgrade guards passed\n'
