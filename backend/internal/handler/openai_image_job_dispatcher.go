@@ -288,6 +288,15 @@ func (d *openAIImageJobDispatcher) finishAttempt(ctx context.Context, job *openA
 		message = http.StatusText(result.statusCode)
 	}
 	if result.deliveryFailed {
+		if d.h != nil && d.h.gatewayService != nil {
+			if _, recoverable := d.h.gatewayService.ImageJobDeliveryRecovery(job.ID); recoverable {
+				// The next execution sees the private receipt and fetches the same
+				// image. It never enters the generation POST or repeats billing.
+				delay := 10 * time.Second
+				d.store.markPendingForRetry(job.ID, time.Now().Add(delay), false)
+				return d.queue.RequeueAfter(ctx, job.ID, delay)
+			}
+		}
 		// Upstream already returned a successful response. A fresh queue
 		// attempt would repeat paid generation instead of retrying delivery.
 		message = "Upstream returned a successful response, but the relay could not finish image delivery; automatic regeneration was skipped"

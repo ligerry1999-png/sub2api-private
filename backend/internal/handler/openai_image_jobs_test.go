@@ -2,12 +2,14 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +18,35 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func deliveryRecoveryTestService(cfg *config.Config) *service.OpenAIGatewayService {
+	return service.NewOpenAIGatewayService(nil, nil, nil, nil, nil, nil, nil, cfg,
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+}
+
+func writeImageDeliveryTestReceipt(t *testing.T, dataDir, jobID string, createdAt time.Time) {
+	t.Helper()
+	p := filepath.Join(dataDir, "image_jobs", jobID, "delivery-source.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0700))
+	body, err := json.Marshal(map[string]any{"job_id": jobID, "account_id": 7, "base_url": "https://relay.example.com",
+		"created_at": createdAt, "response": map[string]any{"data": []any{map[string]any{"url": "https://cdn.example.com/image.png"}}}})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(p, body, 0600))
+}
+
+func TestForwardImageJobNeverPostsGenerationWhenDeliveryReceiptExpired(t *testing.T) {
+	var posts atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { posts.Add(1); w.WriteHeader(200) }))
+	defer server.Close()
+	cfg := durableImageJobTestConfig(t.TempDir(), 10, 1<<20)
+	cfg.Server.Port = server.Listener.Addr().(*net.TCPAddr).Port
+	writeImageDeliveryTestReceipt(t, cfg.Pricing.DataDir, "imgjob_expired_receipt", time.Now().Add(-10*time.Minute))
+	h := &OpenAIGatewayHandler{cfg: cfg, gatewayService: deliveryRecoveryTestService(cfg)}
+	result := h.forwardImageJob(context.Background(), "imgjob_expired_receipt", "/v1/images/generations", []byte(`{}`), nil, time.Second)
+	require.True(t, result.deliveryFailed)
+	require.Error(t, result.err)
+	require.Zero(t, posts.Load())
+}
 
 func TestForwardImageJobForcesFileURLDelivery(t *testing.T) {
 	receivedHeaders := make(chan http.Header, 1)

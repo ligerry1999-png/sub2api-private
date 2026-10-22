@@ -34,6 +34,13 @@ This directory contains the private deployment layer for Sub2API.
 - Nginx image uploads: 100 MB request limit and 600-second request-body timeout.
 - Production image worker bridge remains disabled by default; native OAuth
   image generation stays available as the fallback path.
+- Async image URL delivery saves a private `delivery-source.json` receipt before
+  downloading. A download timeout retries the same URL with a fresh 60-second
+  attempt deadline. The durable job may resume delivery twice within five
+  minutes of receiving the URL; it does not repeat the generation POST or billing.
+  Polling reports `running` / `phase=delivery` while this recovery is queued.
+  Exhausted or damaged receipts stop safely and remain available for inspection.
+  Receipts follow the existing terminal-job retention and are never public files.
 
 ## Manual workflow
 
