@@ -253,6 +253,33 @@ disable_mutating_background_jobs() {
        SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;"
 }
 
+validate_v0217_migrations() {
+  assert_query_equal "v0.2.17 migration records" 5 \
+    "SELECT COUNT(*) FROM schema_migrations WHERE filename IN (
+      '242_drop_platform_check_constraints.sql', '242_group_i18n.sql',
+      '243_gemini_cached_contents.sql', '244_gemini_cached_contents_channel_usage.sql',
+      '245_gemini_cached_contents_mutation_lease.sql');"
+  assert_query_equal "platform constraints replaced by application validation" 0 \
+    "SELECT COUNT(*) FROM pg_constraint WHERE conname IN (
+      'user_platform_quotas_platform_check', 'composite_model_routes_target_platform_check');"
+  assert_query_equal "group locale storage" 1 \
+    "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'public'
+       AND table_name = 'groups' AND column_name = 'i18n' AND data_type = 'jsonb'
+       AND is_nullable = 'NO';"
+  assert_query_equal "Gemini cache binding and recovery columns" 10 \
+    "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'public'
+       AND table_name = 'gemini_cached_contents' AND column_name IN (
+         'public_id', 'user_id', 'api_key_id', 'group_id', 'account_id', 'expire_time',
+         'channel_usage', 'mutation_token', 'mutation_lease_until', 'deleted_at');"
+  assert_query_equal "Gemini cache indexes" 4 \
+    "SELECT COUNT(*) FROM pg_indexes WHERE schemaname = 'public'
+       AND tablename = 'gemini_cached_contents' AND indexname IN (
+         'idx_gemini_cached_contents_public_id', 'idx_gemini_cached_contents_api_key_active',
+         'idx_gemini_cached_contents_account', 'idx_gemini_cached_contents_pending_mutation');"
+  assert_query_equal "private image logs preserved" t \
+    "SELECT to_regclass('public.image_logs') IS NOT NULL;"
+}
+
 validate_v021_migrations() {
   expected_migrations="$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
     "SELECT COUNT(*) FROM schema_migrations WHERE filename IN (
@@ -556,6 +583,7 @@ assert_query_equal "migration 191 record" 1 \
 assert_query_equal "migration 191 passkey tables" t \
   "SELECT to_regclass('public.passkey_user_handles') IS NOT NULL AND to_regclass('public.passkey_credentials') IS NOT NULL;"
 validate_v021_migrations
+validate_v0217_migrations
 
 after_migrations="$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc 'SELECT COUNT(*) FROM schema_migrations;')"
 if git -C "$CANDIDATE_DIR" diff --quiet "$PREVIOUS_SHA" "$CANDIDATE_SHA" -- backend/migrations; then
@@ -589,6 +617,7 @@ run_application_checked "$candidate_image" "$CANDIDATE_SHA" candidate-second
 assert_equal "candidate-second row snapshot" "$before_snapshot" "$(database_snapshot)"
 assert_equal "candidate-second private config digest" "$before_private_config_snapshot" "$(private_config_snapshot)"
 validate_v021_migrations
+validate_v0217_migrations
 assert_query_equal "invalid database indexes" 0 \
   "SELECT COUNT(*) FROM pg_index WHERE NOT indisvalid;"
 
