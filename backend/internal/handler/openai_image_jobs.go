@@ -492,14 +492,9 @@ func (h *OpenAIGatewayHandler) runImageJob(jobID string, endpoint string, body [
 }
 
 func (h *OpenAIGatewayHandler) forwardImageJob(ctx context.Context, jobID string, endpoint string, body []byte, header http.Header, timeout time.Duration) openAIImageJobResult {
-	if h.gatewayService != nil {
-		result, present, err := h.gatewayService.ResumeImageJobDelivery(ctx, jobID)
-		if present {
-			if err != nil {
-				return openAIImageJobResult{statusCode: http.StatusBadGateway, err: err, deliveryFailed: true}
-			}
-			return openAIImageJobResult{statusCode: http.StatusOK, contentType: "application/json", body: result}
-		}
+	if h.gatewayService != nil && h.gatewayService.ImageJobHasDeliverySource(jobID) {
+		return openAIImageJobResult{statusCode: http.StatusBadGateway, deliveryFailed: true,
+			err: fmt.Errorf("existing image delivery source requires result and billing reconciliation; automatic regeneration was skipped")}
 	}
 	url := "http://127.0.0.1:" + strconv.Itoa(serverPortForImageJob(h.cfg)) + endpoint
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -595,12 +590,6 @@ func (h *OpenAIGatewayHandler) imageJobPayload(c *gin.Context, job *openAIImageJ
 		"status_url": "/v1/image-jobs/" + job.ID,
 		"result_url": "/v1/image-jobs/" + job.ID + "/result",
 		"cancel_url": "/v1/image-jobs/" + job.ID + "/cancel",
-	}
-	if h.gatewayService != nil && (job.Status == openAIImageJobStatusPending || job.Status == openAIImageJobStatusRunning) {
-		if present, _ := h.gatewayService.ImageJobDeliveryRecovery(job.ID); present {
-			payload["status"] = openAIImageJobStatusRunning
-			payload["phase"] = "delivery"
-		}
 	}
 	if job.Model != "" {
 		payload["model"] = job.Model

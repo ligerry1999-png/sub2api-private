@@ -2,15 +2,18 @@ package service
 
 import (
 	"context"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
-	"github.com/tidwall/gjson"
 )
 
 type imageDeadlineBody struct{ ctx context.Context }
@@ -21,6 +24,37 @@ func (b imageDeadlineBody) Close() error             { return nil }
 type imageTimeoutOnceUpstream struct {
 	httpUpstreamRecorder
 	calls int
+}
+
+type imageReadFailureOnceUpstream struct{ httpUpstreamRecorder }
+
+func (u *imageReadFailureOnceUpstream) Do(req *http.Request, proxy string, id int64, concurrency int) (*http.Response, error) {
+	u.requests = append(u.requests, req)
+	if len(u.requests) == 1 {
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: errReadCloser{err: io.ErrUnexpectedEOF}}, nil
+	}
+	return b64BackfillImageResponse(200, "image/png", b64BackfillPNGBytes), nil
+}
+
+func TestImageDownloadRecoveryReturnsOriginalUsageAndImageLogResults(t *testing.T) {
+	upstream := &imageReadFailureOnceUpstream{}
+	svc := &OpenAIGatewayService{cfg: &config.Config{Pricing: config.PricingConfig{DataDir: t.TempDir()}}, httpUpstream: upstream}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "https://relay.example.com/v1/images/generations", nil)
+	c.Request.Header.Set("X-Image-Result-Delivery", "file_url")
+	response := &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"usage":{"input_tokens":5,"output_tokens":7},"data":[{"url":"https://cdn.example.com/a.png"}]}`))}
+	usage, count, _, images, err := svc.handleOpenAIImagesNonStreamingResponse(context.Background(), response, c, b64BackfillAccount(true), &OpenAIImagesRequest{})
+	require.NoError(t, err)
+	require.Equal(t, 5, usage.InputTokens)
+	require.Equal(t, 7, usage.OutputTokens)
+	require.Equal(t, 1, count)
+	require.Len(t, images, 1)
+	require.Len(t, upstream.requests, 2)
+	require.Contains(t, recorder.Body.String(), "/image-files/")
+	for _, request := range upstream.requests {
+		require.Equal(t, http.MethodGet, request.Method)
+	}
 }
 
 func (u *imageTimeoutOnceUpstream) Do(req *http.Request, proxy string, id int64, concurrency int) (*http.Response, error) {
@@ -44,7 +78,7 @@ func TestImageDownloadTimeoutStartsFreshAttemptWithoutGeneration(t *testing.T) {
 	}
 }
 
-func TestImageDeliveryReceiptResumesExistingImageAfterInitialFailure(t *testing.T) {
+func TestImageDeliveryReceiptPreservesExistingImageAfterInitialFailure(t *testing.T) {
 	root := t.TempDir()
 	options := &openAIImagesResultDeliveryOptions{Mode: openAIImagesResultDeliveryFileURL, BaseURL: "https://relay.example.com", DataDir: root, JobID: "imgjob_resume", AccountID: 7, PreserveSource: true,
 		FetchURL: func(string) ([]byte, error) { return nil, context.DeadlineExceeded }}
@@ -54,19 +88,15 @@ func TestImageDeliveryReceiptResumesExistingImageAfterInitialFailure(t *testing.
 	info, err := os.Stat(p)
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(0600), info.Mode().Perm())
-	upstream := &httpUpstreamRecorder{resp: b64BackfillImageResponse(200, "image/png", b64BackfillPNGBytes)}
 	cfg := &config.Config{}
 	cfg.Pricing.DataDir = root
-	svc := &OpenAIGatewayService{cfg: cfg, httpUpstream: upstream, accountRepo: &openAIRecordUsageAccountRepoStub{account: b64BackfillAccount(true)}}
-	result, found, err := svc.ResumeImageJobDelivery(context.Background(), "imgjob_resume")
+	svc := &OpenAIGatewayService{cfg: cfg}
+	require.True(t, svc.ImageJobHasDeliverySource("imgjob_resume"))
+	source, found, err := readImageDeliverySource(root, "imgjob_resume")
+	require.NoError(t, err)
 	require.True(t, found)
-	require.NoError(t, err)
-	require.Contains(t, gjson.GetBytes(result, "data.0.url").String(), "relay.example.com/image-files/")
-	require.Len(t, upstream.requests, 1)
-	require.Equal(t, http.MethodGet, upstream.requests[0].Method)
-	source, _, err := readImageDeliverySource(root, "imgjob_resume")
-	require.NoError(t, err)
-	require.Equal(t, 1, source.RecoveryAttempts)
+	require.Contains(t, string(source.Response), "https://cdn.example.com/a.png?private=secret")
+	require.EqualValues(t, 7, source.AccountID)
 }
 
 func TestImageDeliveryReceiptRequiresAdmittedJobAndMatchingOwner(t *testing.T) {
@@ -86,19 +116,10 @@ func TestExpiredOrCorruptImageReceiptNeverPermitsRegeneration(t *testing.T) {
 	cfg.Pricing.DataDir = root
 	svc := &OpenAIGatewayService{cfg: cfg}
 	require.NoError(t, saveImageDeliverySource(root, imageDeliverySource{JobID: "imgjob_expired", CreatedAt: time.Now().Add(-10 * time.Minute)}))
-	_, found, err := svc.ResumeImageJobDelivery(context.Background(), "imgjob_expired")
-	require.True(t, found)
-	require.Error(t, err)
-	present, retry := svc.ImageJobDeliveryRecovery("imgjob_expired")
-	require.True(t, present)
-	require.False(t, retry)
+	require.True(t, svc.ImageJobHasDeliverySource("imgjob_expired"))
 	p, _ := imageDeliverySourcePath(root, "imgjob_corrupt")
 	require.NoError(t, os.MkdirAll(filepath.Dir(p), 0700))
 	require.NoError(t, os.WriteFile(p, []byte("broken"), 0600))
-	_, found, err = svc.ResumeImageJobDelivery(context.Background(), "imgjob_corrupt")
-	require.True(t, found)
-	require.Error(t, err)
-	_, found, err = svc.ResumeImageJobDelivery(context.Background(), "imgjob_absent")
-	require.False(t, found)
-	require.NoError(t, err)
+	require.True(t, svc.ImageJobHasDeliverySource("imgjob_corrupt"))
+	require.False(t, svc.ImageJobHasDeliverySource("imgjob_absent"))
 }
