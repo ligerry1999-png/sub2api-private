@@ -1080,11 +1080,12 @@ func (s *OpenAIGatewayService) handleOpenAIImagesNonStreamingResponse(
 		}
 	}
 	if delivery != nil {
-		body, err = applyOpenAIImagesFileURLDelivery(body, delivery)
-		if err != nil {
-			recordOpenAIImagesPostUpstreamDeliveryFailure(c, account, resp, err, body)
-			return OpenAIUsage{}, 0, nil, nil, err
+		deliveredBody, deliveryErr := applyOpenAIImagesFileURLDelivery(body, delivery)
+		if deliveryErr != nil {
+			recordOpenAIImagesPostUpstreamDeliveryFailure(c, account, resp, deliveryErr, body)
+			return OpenAIUsage{}, 0, nil, nil, deliveryErr
 		}
+		body = deliveredBody
 	} else {
 		body = s.backfillOpenAIImagesB64JSON(ctx, account, parsed, body)
 	}
