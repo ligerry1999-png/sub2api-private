@@ -146,12 +146,19 @@ func (s *OpenAIGatewayService) fetchOpenAIImageURLBytes(ctx context.Context, acc
 			port = "80"
 		}
 	}
-	ctx, cancel := context.WithTimeout(WithHTTPUpstreamPublicHostsOnly(ctx), openAIImageURLDownloadTimeout)
+	return s.fetchOpenAIImageURLBytesWithTimeout(ctx, account, downloadURL, host, port, openAIImageURLDownloadTimeout)
+}
+
+func (s *OpenAIGatewayService) fetchOpenAIImageURLBytesWithTimeout(ctx context.Context, account *Account, downloadURL, host, port string, attemptTimeout time.Duration) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(WithHTTPUpstreamPublicHostsOnly(ctx), time.Duration(openAIImageURLDownloadMaxAttempts)*attemptTimeout+3*time.Second)
 	defer cancel()
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
+	started := time.Now()
+	var attemptStarted time.Time
+	var headerMs, bytesRead, contentLength int64
 	logFailure := func(attempt int, status int, reason string) {
 		logger.FromContext(ctx).Warn("openai.images.image_url_download_failed",
 			zap.Int64("account_id", account.ID),
@@ -159,49 +166,64 @@ func (s *OpenAIGatewayService) fetchOpenAIImageURLBytes(ctx context.Context, acc
 			zap.String("image_url_port", port),
 			zap.Int("image_url_http_status", status),
 			zap.Int("download_attempts", attempt),
+			zap.Int64("download_elapsed_ms", time.Since(started).Milliseconds()),
+			zap.Int64("attempt_elapsed_ms", time.Since(attemptStarted).Milliseconds()),
+			zap.Int64("response_header_ms", headerMs),
+			zap.Int64("bytes_read", bytesRead),
+			zap.Int64("content_length", contentLength),
 			zap.String("failure_reason", reason),
 		)
 	}
 	for attempt := 1; attempt <= openAIImageURLDownloadMaxAttempts; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+		attemptStarted = time.Now()
+		headerMs, bytesRead, contentLength = -1, 0, -1
+		attemptCtx, cancelAttempt := context.WithTimeout(ctx, attemptTimeout)
+		defer cancelAttempt()
+		req, err := http.NewRequestWithContext(attemptCtx, http.MethodGet, downloadURL, nil)
 		if err != nil {
 			return nil, fmt.Errorf("build image download request: %w", err)
 		}
 		req.Header.Set("Accept", "image/*,*/*;q=0.8")
 		resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+		headerMs = time.Since(attemptStarted).Milliseconds()
 		if err != nil {
+			cancelAttempt()
+			logFailure(attempt, 0, "transport_error")
 			if attempt < openAIImageURLDownloadMaxAttempts && ctx.Err() == nil && retryableOpenAIImageURLDownloadError(err) {
 				if waitErr := waitOpenAIImageURLDownloadRetry(ctx, attempt); waitErr == nil {
 					continue
 				}
 			}
-			logFailure(attempt, 0, "transport_error")
 			var urlErr *url.Error
 			if errors.As(err, &urlErr) {
 				err = urlErr.Err // Do not place a signed URL in application logs.
 			}
 			return nil, fmt.Errorf("download image: %w", err)
 		}
+		contentLength = resp.ContentLength
 		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 			status := resp.StatusCode
 			_ = resp.Body.Close()
+			cancelAttempt()
+			logFailure(attempt, status, "http_status")
 			if attempt < openAIImageURLDownloadMaxAttempts && ctx.Err() == nil && retryableOpenAIImageURLDownloadStatus(status) {
 				if waitErr := waitOpenAIImageURLDownloadRetry(ctx, attempt); waitErr == nil {
 					continue
 				}
 			}
-			logFailure(attempt, status, "http_status")
 			return nil, fmt.Errorf("download image: unexpected status %d", status)
 		}
 		data, readErr := io.ReadAll(io.LimitReader(resp.Body, openAIImageMaxDownloadBytes+1))
+		bytesRead = int64(len(data))
 		_ = resp.Body.Close()
+		cancelAttempt()
 		if readErr != nil {
+			logFailure(attempt, resp.StatusCode, "read_error")
 			if attempt < openAIImageURLDownloadMaxAttempts && ctx.Err() == nil && retryableOpenAIImageURLDownloadError(readErr) {
 				if waitErr := waitOpenAIImageURLDownloadRetry(ctx, attempt); waitErr == nil {
 					continue
 				}
 			}
-			logFailure(attempt, resp.StatusCode, "read_error")
 			return nil, fmt.Errorf("read image body: %w", readErr)
 		}
 		if int64(len(data)) > openAIImageMaxDownloadBytes {
@@ -213,6 +235,10 @@ func (s *OpenAIGatewayService) fetchOpenAIImageURLBytes(ctx context.Context, acc
 		if !isBackfillImageContent(data) {
 			return nil, errors.New("download image: content is not an allowed image format")
 		}
+		logger.FromContext(ctx).Info("openai.images.image_url_download_completed",
+			zap.Int64("account_id", account.ID), zap.String("image_url_host", host),
+			zap.Int("download_attempts", attempt), zap.Int64("download_elapsed_ms", time.Since(started).Milliseconds()),
+			zap.Int64("response_header_ms", headerMs), zap.Int64("bytes_read", bytesRead), zap.Int64("content_length", contentLength))
 		return data, nil
 	}
 	return nil, errors.New("image download attempts exhausted")

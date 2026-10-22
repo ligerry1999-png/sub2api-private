@@ -1101,11 +1101,14 @@ func buildOpenAIImagesAPIResponse(
 }
 
 type openAIImagesResultDeliveryOptions struct {
-	Mode     string
-	BaseURL  string
-	DataDir  string
-	JobID    string
-	FetchURL func(string) ([]byte, error)
+	Mode           string
+	BaseURL        string
+	DataDir        string
+	JobID          string
+	AccountID      int64
+	Resuming       bool
+	PreserveSource bool
+	FetchURL       func(string) ([]byte, error)
 }
 
 func buildOpenAIImagesAPIResponseWithDelivery(
@@ -1182,6 +1185,22 @@ func applyOpenAIImagesFileURLDelivery(body []byte, delivery *openAIImagesResultD
 		return nil, fmt.Errorf("upstream image response has no image data")
 	}
 	createdAt := gjson.GetBytes(body, "created").Int()
+	if delivery.JobID != "" && delivery.PreserveSource && !delivery.Resuming {
+		// Keep the compact URL response before any download can fail. Base64
+		// responses are already self contained and do not need this checkpoint.
+		needsDownload := false
+		for _, item := range items.Array() {
+			if value := item.Get("url").String(); strings.HasPrefix(value, "http://") || strings.HasPrefix(value, "https://") {
+				needsDownload = true
+			}
+		}
+		if needsDownload {
+			if err := saveImageDeliverySource(delivery.DataDir, imageDeliverySource{JobID: delivery.JobID,
+				AccountID: delivery.AccountID, BaseURL: delivery.BaseURL, CreatedAt: time.Now(), Response: body}); err != nil {
+				return nil, fmt.Errorf("preserve image delivery receipt: %w", err)
+			}
+		}
+	}
 	for index, item := range items.Array() {
 		result, ok := imageLogResultFromJSON([]byte(item.Raw))
 		if !ok {
@@ -1226,6 +1245,16 @@ func (s *OpenAIGatewayService) openAIImagesResultDeliveryOptions(c *gin.Context,
 		BaseURL: requestBaseURLForOpenAIImages(c),
 		DataDir: dataDir,
 		JobID:   safeOpenAIImageJobIDFromContext(c),
+	}
+	if account != nil {
+		delivery.AccountID = account.ID
+	}
+	if c != nil {
+		if value, ok := c.Get("api_key"); ok {
+			if key, ok := value.(*APIKey); ok && key != nil {
+				delivery.PreserveSource = canPreserveImageDeliverySource(dataDir, delivery.JobID, key.ID)
+			}
+		}
 	}
 	if s != nil && s.httpUpstream != nil && account != nil {
 		requestContext := context.Background()

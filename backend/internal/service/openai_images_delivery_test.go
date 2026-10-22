@@ -17,10 +17,13 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/tlsfingerprint"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestOpenAIImagesFileURLDeliveryWritesPublicImage(t *testing.T) {
@@ -340,11 +343,12 @@ func TestImageURLDownloadRetries404ButNot401(t *testing.T) {
 
 func TestOpenAIImagesFileURLDeliveryFailureMarksPostUpstreamFailure(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	core, logs := observer.New(zap.WarnLevel)
 	upstream := &httpUpstreamRecorder{resp: b64BackfillImageResponse(http.StatusUnauthorized, "text/plain", []byte("unauthorized"))}
 	svc := &OpenAIGatewayService{cfg: &config.Config{Pricing: config.PricingConfig{DataDir: t.TempDir()}}, httpUpstream: upstream}
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodPost, "https://sub2api.example/v1/images/generations", nil)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "https://sub2api.example/v1/images/generations", nil).WithContext(logger.IntoContext(context.Background(), zap.New(core)))
 	ctx.Request.Header.Set("X-Image-Result-Delivery", "file_url")
 	response := &http.Response{
 		StatusCode: http.StatusOK,
@@ -358,6 +362,11 @@ func TestOpenAIImagesFileURLDeliveryFailureMarksPostUpstreamFailure(t *testing.T
 	status, ok := ctx.Get(OpsUpstreamStatusCodeKey)
 	require.True(t, ok)
 	require.Equal(t, http.StatusOK, status)
+	entries := logs.FilterMessage("openai.images.post_upstream_delivery_failed").All()
+	require.Len(t, entries, 1)
+	require.Equal(t, true, entries[0].ContextMap()["upstream_json_valid"])
+	require.Equal(t, int64(1), entries[0].ContextMap()["upstream_data_count"])
+	require.NotContains(t, entries[0].ContextMap(), "url")
 }
 
 func TestOpenAIImagesSuccessfulUpstreamBodyReadFailureStopsRegeneration(t *testing.T) {
