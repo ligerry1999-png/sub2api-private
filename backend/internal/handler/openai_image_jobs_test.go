@@ -39,7 +39,9 @@ func TestForwardImageJobNeverPostsGenerationWhenDeliveryReceiptExpired(t *testin
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { posts.Add(1); w.WriteHeader(200) }))
 	defer server.Close()
 	cfg := durableImageJobTestConfig(t.TempDir(), 10, 1<<20)
-	cfg.Server.Port = server.Listener.Addr().(*net.TCPAddr).Port
+	address, ok := server.Listener.Addr().(*net.TCPAddr)
+	require.True(t, ok)
+	cfg.Server.Port = address.Port
 	writeImageDeliveryTestReceipt(t, cfg.Pricing.DataDir, "imgjob_expired_receipt", time.Now().Add(-10*time.Minute))
 	h := &OpenAIGatewayHandler{cfg: cfg, gatewayService: deliveryRecoveryTestService(cfg)}
 	result := h.forwardImageJob(context.Background(), "imgjob_expired_receipt", "/v1/images/generations", []byte(`{}`), nil, time.Second)
