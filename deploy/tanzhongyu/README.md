@@ -36,10 +36,11 @@ This directory contains the private deployment layer for Sub2API.
   image generation stays available as the fallback path.
 - Async image URL delivery saves a private `delivery-source.json` receipt before
   downloading. A download timeout retries the same URL with a fresh 60-second
-  attempt deadline. The durable job may resume delivery twice within five
-  minutes of receiving the URL; it does not repeat the generation POST or billing.
-  Polling reports `running` / `phase=delivery` while this recovery is queued.
-  Exhausted or damaged receipts stop safely and remain available for inspection.
+  attempt deadline, up to three GET attempts in the original forwarding request.
+  A recovered download completes the existing usage, billing, and image-log path.
+  After those attempts are exhausted or a process restarts with a receipt,
+  the job stops safely with its source available for reconciliation; it does not
+  bypass finalization or repeat paid generation automatically.
   Receipts follow the existing terminal-job retention and are never public files.
 
 ## Manual workflow

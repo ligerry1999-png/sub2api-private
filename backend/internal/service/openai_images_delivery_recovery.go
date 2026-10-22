@@ -1,27 +1,21 @@
 package service
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 )
 
-const imageDeliveryRecoveryWindow = 5 * time.Minute
-const imageDeliveryRecoveryLimit = 2
-
 // Signed upstream URLs stay in the private job directory. Neither the public
 // status response nor application logs may expose this receipt.
 type imageDeliverySource struct {
-	JobID            string          `json:"job_id"`
-	AccountID        int64           `json:"account_id"`
-	BaseURL          string          `json:"base_url"`
-	CreatedAt        time.Time       `json:"created_at"`
-	RecoveryAttempts int             `json:"recovery_attempts"`
-	Response         json.RawMessage `json:"response"`
+	JobID     string          `json:"job_id"`
+	AccountID int64           `json:"account_id"`
+	BaseURL   string          `json:"base_url"`
+	CreatedAt time.Time       `json:"created_at"`
+	Response  json.RawMessage `json:"response"`
 }
 
 func imageDeliverySourcePath(dataDir, jobID string) (string, error) {
@@ -112,44 +106,10 @@ func (s *OpenAIGatewayService) imageDeliveryDataDir() string {
 	return "./data"
 }
 
-// ImageJobDeliveryRecovery reports presence separately from retry eligibility:
-// a damaged/expired receipt must never fall through into paid generation.
-func (s *OpenAIGatewayService) ImageJobDeliveryRecovery(jobID string) (present, retry bool) {
-	source, present, err := readImageDeliverySource(s.imageDeliveryDataDir(), jobID)
-	return present, err == nil && present && source.RecoveryAttempts < imageDeliveryRecoveryLimit && time.Now().Before(source.CreatedAt.Add(imageDeliveryRecoveryWindow))
-}
-
-// ResumeImageJobDelivery performs GETs for the already-created image only.
-// The caller owns the existing job lease, so restart/retry cannot regenerate.
-func (s *OpenAIGatewayService) ResumeImageJobDelivery(ctx context.Context, jobID string) ([]byte, bool, error) {
-	dataDir := s.imageDeliveryDataDir()
-	source, present, err := readImageDeliverySource(dataDir, jobID)
-	if err != nil || !present {
-		return nil, present, err
-	}
-	deadline := source.CreatedAt.Add(imageDeliveryRecoveryWindow)
-	if source.RecoveryAttempts >= imageDeliveryRecoveryLimit || !time.Now().Before(deadline) {
-		return nil, true, errors.New("image delivery recovery budget exhausted")
-	}
-	source.RecoveryAttempts++
-	if err = saveImageDeliverySource(dataDir, *source); err != nil {
-		return nil, true, err
-	}
-	if s == nil || s.accountRepo == nil {
-		return nil, true, errors.New("image delivery account lookup is unavailable")
-	}
-	account, err := s.accountRepo.GetByID(ctx, source.AccountID)
-	if err != nil || account == nil {
-		return nil, true, errors.New("image delivery account is unavailable")
-	}
-	ctx, cancel := context.WithDeadline(ctx, deadline)
-	defer cancel()
-	delivery := &openAIImagesResultDeliveryOptions{Mode: openAIImagesResultDeliveryFileURL, BaseURL: source.BaseURL,
-		DataDir: dataDir, JobID: jobID, AccountID: source.AccountID, Resuming: true,
-		FetchURL: func(rawURL string) ([]byte, error) { return s.fetchOpenAIImageURLBytes(ctx, account, rawURL) }}
-	body, err := applyOpenAIImagesFileURLDelivery(source.Response, delivery)
-	if err != nil {
-		return nil, true, fmt.Errorf("resume existing image delivery: %w", err)
-	}
-	return body, true, nil
+// ImageJobHasDeliverySource includes damaged receipts. After a process restart,
+// delivery cannot bypass the original usage/billing/log finalization pipeline.
+// Keep the source for reconciliation instead of regenerating or underbilling.
+func (s *OpenAIGatewayService) ImageJobHasDeliverySource(jobID string) bool {
+	_, present, _ := readImageDeliverySource(s.imageDeliveryDataDir(), jobID)
+	return present
 }

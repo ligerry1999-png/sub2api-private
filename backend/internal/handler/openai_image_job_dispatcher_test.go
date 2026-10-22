@@ -142,7 +142,7 @@ func TestOpenAIImageJobDispatcherDoesNotRegenerateAfterDeliveryFailure(t *testin
 	requireOpenAIImageJobQueueEmpty(t, queue)
 }
 
-func TestImageJobDispatcherKeepsDeliveryRecoveryQueuedWithoutGenerationRetry(t *testing.T) {
+func TestImageJobDispatcherPreservesReceiptWithoutBypassingOriginalFinalization(t *testing.T) {
 	store, queue, dispatcher, cleanup := newOpenAIImageJobDispatcherTest(t, 2)
 	defer cleanup()
 	job := enqueueFakeOpenAIImageJob(t, store, queue, "imgjob_recover_delivery")
@@ -154,14 +154,15 @@ func TestImageJobDispatcherKeepsDeliveryRecoveryQueuedWithoutGenerationRetry(t *
 	require.NoError(t, dispatcher.RunOnce(context.Background()))
 	current, ok := store.get(job.ID)
 	require.True(t, ok)
-	require.Equal(t, openAIImageJobStatusPending, current.Status)
-	require.Zero(t, current.Attempts)
-	require.Equal(t, 1, queue.delayedCount())
+	require.Equal(t, openAIImageJobStatusFailed, current.Status)
+	require.Equal(t, 1, current.Attempts)
+	require.Zero(t, queue.delayedCount())
 	_, err := store.readRequest(job.ID)
-	require.NoError(t, err)
+	require.Error(t, err)
+	require.FileExists(t, filepath.Join(store.jobDir(job.ID), "delivery-source.json"))
 	payload := dispatcher.h.imageJobPayload(nil, current)
-	require.Equal(t, "running", payload["status"])
-	require.Equal(t, "delivery", payload["phase"])
+	require.Equal(t, "failed", payload["status"])
+	require.Equal(t, openAIImageJobErrorDelivery, current.ErrorType)
 	require.NotContains(t, payload, "response")
 }
 

@@ -1106,7 +1106,6 @@ type openAIImagesResultDeliveryOptions struct {
 	DataDir        string
 	JobID          string
 	AccountID      int64
-	Resuming       bool
 	PreserveSource bool
 	FetchURL       func(string) ([]byte, error)
 }
@@ -1185,7 +1184,7 @@ func applyOpenAIImagesFileURLDelivery(body []byte, delivery *openAIImagesResultD
 		return nil, fmt.Errorf("upstream image response has no image data")
 	}
 	createdAt := gjson.GetBytes(body, "created").Int()
-	if delivery.JobID != "" && delivery.PreserveSource && !delivery.Resuming {
+	if delivery.JobID != "" && delivery.PreserveSource {
 		// Keep the compact URL response before any download can fail. Base64
 		// responses are already self contained and do not need this checkpoint.
 		needsDownload := false
