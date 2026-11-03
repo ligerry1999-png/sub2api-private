@@ -41,7 +41,7 @@ func scopedCodexPermissions(credentials, extra map[string]any, proxy *int64) ([]
 	permissions := []string{"accounts.credentials", "accounts.schedule"}
 	for key, value := range credentials {
 		switch key {
-		case "access_token", "refresh_token", "id_token", "client_id", "expires_at", "email", "chatgpt_account_id", "chatgpt_user_id", "organization_id", "plan_type", "auth_mode", "agent_runtime_id", "agent_private_key", "task_id":
+		case "access_token", "refresh_token", "id_token", "client_id", "expires_at", "email", "chatgpt_account_id", "chatgpt_user_id", "organization_id", "plan_type", "account_name", "account_structure", "auth_mode", "agent_runtime_id", "agent_private_key", "task_id":
 			if _, ok := value.(string); !ok {
 				return nil, infraerrors.BadRequest("SCOPED_CODEX_INPUT", "认证字段格式无效")
 			}

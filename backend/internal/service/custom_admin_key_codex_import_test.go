@@ -15,6 +15,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestScopedCodexImportAcceptsNormalizedAccountMetadata(t *testing.T) {
+	// normalizeCodexImportEntry emits these identity fields for organization sessions.
+	credentials := map[string]any{
+		"access_token": "session-token", "chatgpt_account_id": "organization-id",
+		"account_name": "Example team", "account_structure": "organization",
+	}
+	permissions, err := scopedCodexPermissions(credentials, nil, nil)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{"accounts.credentials", "accounts.schedule"}, permissions)
+	for _, field := range []string{"account_name", "account_structure"} {
+		malformed := map[string]any{field: true}
+		_, err := scopedCodexPermissions(malformed, nil, nil)
+		require.Equal(t, 400, infraerrors.Code(err))
+	}
+	_, err = scopedCodexPermissions(map[string]any{"unexpected_secret": "value"}, nil, nil)
+	require.Equal(t, 400, infraerrors.Code(err))
+}
+
 type scopedCodexTestRepo struct{ *scopedAdminWriteTestRepo }
 
 func (r *scopedCodexTestRepo) Create(ctx context.Context, a *Account) error {
@@ -75,7 +93,7 @@ func TestScopedCodexWriteAuthorizationAndTransactions(t *testing.T) {
 	all := []string{"accounts.create", "accounts.credentials", "accounts.schedule", "accounts.network", "accounts.groups"}
 	input := func() *CreateAccountInput {
 		rate := 1.0
-		return &CreateAccountInput{Name: "导入创建", Platform: PlatformOpenAI, Type: AccountTypeOAuth, GroupIDs: []int64{1}, Credentials: map[string]any{"access_token": "new", "refresh_token": "refresh", "email": "test@example.com", "chatgpt_account_id": "acct"}, Extra: map[string]any{"import_source": "codex_session", "codex_fingerprint_mode": "off"}, Concurrency: 40, RateMultiplier: &rate}
+		return &CreateAccountInput{Name: "导入创建", Platform: PlatformOpenAI, Type: AccountTypeOAuth, GroupIDs: []int64{1}, Credentials: map[string]any{"access_token": "new", "refresh_token": "refresh", "email": "test@example.com", "chatgpt_account_id": "acct", "account_name": "Example team", "account_structure": "organization"}, Extra: map[string]any{"import_source": "codex_session", "codex_fingerprint_mode": "off"}, Concurrency: 40, RateMultiplier: &rate}
 	}
 	for _, missing := range []string{"accounts.create", "accounts.credentials", "accounts.schedule", "accounts.network"} {
 		t.Run("缺少"+missing, func(t *testing.T) {
@@ -113,6 +131,13 @@ func TestScopedCodexWriteAuthorizationAndTransactions(t *testing.T) {
 	v.Credentials["model_mapping"] = map[string]any{"a": "b"}
 	_, err = admin.ScopedAdminCreateCodex(ctx, v)
 	require.Equal(t, 403, infraerrors.Code(err))
+	for _, field := range []string{"account_name", "account_structure"} {
+		malformed := input()
+		malformed.Credentials[field] = true
+		_, err = admin.ScopedAdminCreateCodex(ctx, malformed)
+		require.Equal(t, 400, infraerrors.Code(err), "identity metadata must remain string-typed")
+	}
+
 	repo.failBind = true
 	_, err = admin.ScopedAdminCreateCodex(ctx, input())
 	require.Error(t, err)
@@ -125,6 +150,8 @@ func TestScopedCodexWriteAuthorizationAndTransactions(t *testing.T) {
 	saved, err := repo.GetByID(ctx, created.ID)
 	require.NoError(t, err)
 	require.Equal(t, "new", saved.Credentials["access_token"])
+	require.Equal(t, "Example team", saved.Credentials["account_name"])
+	require.Equal(t, "organization", saved.Credentials["account_structure"])
 	require.Equal(t, "off", saved.Extra["codex_fingerprint_mode"])
 	require.Equal(t, []int64{1}, saved.GroupIDs)
 	// 不需要账户读取权限；无分组授权显式控制，不自动绑定默认组。
