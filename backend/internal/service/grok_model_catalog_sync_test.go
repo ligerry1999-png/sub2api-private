@@ -26,6 +26,26 @@ const (
 	grokCatalogMetadataFailure   = "Failed to save upstream model metadata"
 )
 
+func TestGrokBackgroundCatalogSyncPreservesCallerSnapshot(t *testing.T) {
+	account := grokOAuthModelSyncTestAccount("https://cli-chat-proxy.grok.com/v1")
+	account.ID = 917284
+	account.Extra = map[string]any{"note": "keep"}
+	before := cloneGrokCatalogMemoryMap(account.Extra)
+	repo := newGrokCatalogMemoryRepo(account)
+	upstream := newGrokCatalogUpstream(http.StatusOK, `{"data":[{"id":"grok-4.7"}]}`, http.StatusOK, `{}`)
+	svc := &GrokQuotaService{accountRepo: repo, httpUpstream: upstream, cfg: upstreamModelSyncTestConfig()}
+	svc.scheduleGrokObservedModelsSync(account)
+	require.Eventually(t, func() bool {
+		_, running := grokObservedModelsFlight.Load(account.ID)
+		return !running
+	}, 5*time.Second, 10*time.Millisecond)
+	// Diagnostics and serialization may read this request-owned snapshot concurrently.
+	require.Equal(t, before, account.Extra)
+	stored, err := repo.GetByID(context.Background(), account.ID)
+	require.NoError(t, err)
+	require.Equal(t, []string{"grok-4.7"}, parseGrokObservedModels(stored.Extra).Models)
+}
+
 func TestGrokCatalogSyncSavesIDOnlyModelsWhenMetadataRegistryFails(t *testing.T) {
 	account := grokOAuthModelSyncTestAccount("https://cli-chat-proxy.grok.com/v1")
 	account.Credentials["model_mapping"] = map[string]any{"alias": "grok-configured"}

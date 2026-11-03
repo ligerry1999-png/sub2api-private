@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"strings"
 	"sync"
@@ -36,8 +37,9 @@ func (s *GrokQuotaService) scheduleGrokObservedModelsSync(account *Account) {
 	if _, loaded := grokObservedModelsFlight.LoadOrStore(id, struct{}{}); loaded {
 		return
 	}
-	// Copy credentials for background use.
+	// Keep observation writes separate from request-owned account snapshots.
 	acc := *account
+	acc.Extra = maps.Clone(account.Extra)
 	go func() {
 		defer grokObservedModelsFlight.Delete(id)
 		ctx, cancel := context.WithTimeout(context.Background(), grokObservedModelsTimeout)
