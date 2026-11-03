@@ -253,6 +253,34 @@ disable_mutating_background_jobs() {
        SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;"
 }
 
+# Project the expected image policy after migration 246, including older dumps
+# which do not yet have the opt-in per-image billing column.
+image_policy_snapshot() {
+  docker exec "$postgres" psql -U sub2api -d sub2api -Atqc \
+    "SELECT COALESCE(jsonb_agg(jsonb_build_array(id,
+       CASE WHEN platform IN ('gemini', 'antigravity') AND NOT EXISTS (
+         SELECT 1 FROM schema_migrations WHERE filename = '246_enable_gemini_image_generation_groups.sql'
+       ) THEN true ELSE allow_image_generation END,
+       COALESCE((to_jsonb(groups) ->> 'image_count_billing')::boolean, false)
+     ) ORDER BY id)::text, '[]') FROM groups;"
+}
+
+validate_v0219_migrations() {
+  assert_query_equal "v0.2.19 migration records" 3 \
+    "SELECT COUNT(*) FROM schema_migrations WHERE filename IN (
+       '246_enable_gemini_image_generation_groups.sql',
+       '247_scoped_admin_api_keys.sql', '248_group_image_count_billing.sql');"
+  assert_query_equal "scoped admin key hash and revocation storage" 4 \
+    "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = 'public'
+       AND table_name = 'scoped_admin_api_keys'
+       AND column_name IN ('key_hash', 'policy', 'revoked_at', 'deleted_at');"
+  assert_query_equal "per-image billing defaults to opt-in" t \
+    "SELECT COUNT(*) = 1 AND bool_and(is_nullable = 'NO' AND column_default = 'false')
+     FROM information_schema.columns WHERE table_schema = 'public'
+       AND table_name = 'groups' AND column_name = 'image_count_billing';"
+  assert_equal "existing image access and billing policy" "$before_image_policy_snapshot" "$(image_policy_snapshot)"
+}
+
 validate_v0217_migrations() {
   assert_query_equal "v0.2.17 migration records" 5 \
     "SELECT COUNT(*) FROM schema_migrations WHERE filename IN (
@@ -558,6 +586,7 @@ fi
 before_snapshot="$(database_snapshot)"
 before_private_config_snapshot="$(private_config_snapshot)"
 before_schema_snapshot="$(schema_snapshot)"
+before_image_policy_snapshot="$(image_policy_snapshot)"
 before_migrations="$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc 'SELECT COUNT(*) FROM schema_migrations;')"
 before_video_model_prices_expression="$(video_model_prices_snapshot_expression)"
 if test "$migration_220_preexisting" = true; then
@@ -584,6 +613,7 @@ assert_query_equal "migration 191 passkey tables" t \
   "SELECT to_regclass('public.passkey_user_handles') IS NOT NULL AND to_regclass('public.passkey_credentials') IS NOT NULL;"
 validate_v021_migrations
 validate_v0217_migrations
+validate_v0219_migrations
 
 after_migrations="$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc 'SELECT COUNT(*) FROM schema_migrations;')"
 if git -C "$CANDIDATE_DIR" diff --quiet "$PREVIOUS_SHA" "$CANDIDATE_SHA" -- backend/migrations; then
@@ -618,6 +648,7 @@ assert_equal "candidate-second row snapshot" "$before_snapshot" "$(database_snap
 assert_equal "candidate-second private config digest" "$before_private_config_snapshot" "$(private_config_snapshot)"
 validate_v021_migrations
 validate_v0217_migrations
+validate_v0219_migrations
 assert_query_equal "invalid database indexes" 0 \
   "SELECT COUNT(*) FROM pg_index WHERE NOT indisvalid;"
 

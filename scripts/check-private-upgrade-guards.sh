@@ -122,6 +122,17 @@ for migration in 242_drop_platform_check_constraints.sql 242_group_i18n.sql \
   test -f "backend/migrations/$migration" || fail "v0.2.17 migration missing: $migration"
   assert_contains "$database_rehearsal" "$migration"
 done
+assert_contains "$database_rehearsal" "validate_v0219_migrations"
+for migration in 246_enable_gemini_image_generation_groups.sql 247_scoped_admin_api_keys.sql 248_group_image_count_billing.sql; do
+  test -f "backend/migrations/$migration" || fail "v0.2.19 migration missing: $migration"
+  assert_contains "$database_rehearsal" "$migration"
+done
+# Keep paid-generation recovery and shared finalization from private releases #16/#17.
+assert_contains "backend/internal/service/openai_images_delivery_recovery.go" "finalization"
+test -f backend/internal/service/openai_images_delivery_recovery_test.go || fail "image delivery recovery tests missing"
+assert_contains "frontend/package.json" '"vue-i18n": "^11.4.16"'
+assert_contains "frontend/package.json" '"follow-redirects@<1.16.2": ">=1.16.2"'
+
 assert_contains "$database_rehearsal" "ImageLogService is a required Wire dependency"
 assert_contains "$database_rehearsal" "restore_production_dump"
 assert_contains "$database_rehearsal" "disable_mutating_background_jobs"
@@ -175,7 +186,7 @@ fi
 test "$actual_migration_sha" = "$expected_migration_sha" || \
   fail "backend/migrations/136_image_logs.sql checksum changed"
 
-test "$(tr -d '\r\n' < backend/cmd/server/VERSION)" = "0.2.17-private.1" || \
+test "$(tr -d '\r\n' < backend/cmd/server/VERSION)" = "0.2.19-private.1" || \
   fail "private version marker changed unexpectedly"
 
 printf 'private upgrade guards passed\n'
