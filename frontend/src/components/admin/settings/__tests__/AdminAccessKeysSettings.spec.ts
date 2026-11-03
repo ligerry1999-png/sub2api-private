@@ -186,6 +186,32 @@ describe('管理员受限密钥配置', () => {
     await flushPromises()
     expect(mocks.update).toHaveBeenCalledWith('key-2', expect.objectContaining({ name: '新名称', allowed_ips: [], policy: { rules, global_permissions: [] } }))
   })
+  it.each([
+    { editingIndex: 0, enabled: false, action: '停用' },
+    { editingIndex: 1, enabled: true, action: '停用' },
+    { editingIndex: 0, enabled: false, action: '刷新' },
+    { editingIndex: 1, enabled: true, action: '刷新' }
+  ])('$action 后保存编辑中的 $editingIndex 号密钥时保留正确状态', async ({ editingIndex, enabled, action }) => {
+    const items = [0, 1].map(index => ({ id: `key-${index}`, name: `原名称${index}`, description: '', enabled: true, key_prefix: `prefix-${index}`, expires_at: null, allowed_ips: [], policy: { rules: [], global_permissions: [] }, revoked_at: null }))
+    mocks.list.mockResolvedValueOnce({ items, permissions: [] })
+    if (action === '停用') mocks.update.mockResolvedValueOnce({ ...items[0], enabled: false })
+    else mocks.list.mockResolvedValueOnce({ items: [{ ...items[0], enabled: false }, items[1]], permissions: [] })
+    mocks.update.mockResolvedValueOnce({ ...items[editingIndex], name: '新名称', enabled })
+    const wrapper = mountSettings()
+    try {
+      await flushPromises()
+      await wrapper.findAll('button').filter(button => button.text() === '编辑权限')[editingIndex]!.trigger('click')
+      await wrapper.get('[data-test="name"]').setValue('新名称')
+      await wrapper.findAll('button').find(button => button.text() === (action === '停用' ? zh.disable : zh.refresh))!.trigger('click')
+      await flushPromises()
+      expect((wrapper.get('[data-test="name"]').element as HTMLInputElement).value).toBe('新名称')
+      await wrapper.get('[data-test="save"]').trigger('click')
+      await flushPromises()
+      expect(mocks.update).toHaveBeenLastCalledWith(`key-${editingIndex}`, expect.objectContaining({ name: '新名称', enabled }))
+    } finally {
+      wrapper.unmount()
+    }
+  })
   it('空数组返回 null 时仍可创建默认无权限密钥', async () => {
     mocks.list.mockResolvedValueOnce({ items: null, permissions: null })
     mocks.create.mockResolvedValueOnce({ key: 'new-secret', item: { id: 'key-3', policy: { rules: null, global_permissions: null } } })

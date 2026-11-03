@@ -132,6 +132,7 @@ async function load() {
   try {
     const [result, allGroups] = await Promise.all([api.list(), getAllIncludingInactive()])
     items.value = (result.items ?? []).map(normalizeItem)
+    syncDraftStatus()
     permissions.value = result.permissions ?? []
     groups.value = allGroups ?? []
     loaded.value = true
@@ -150,7 +151,15 @@ async function mutate(action: () => Promise<void>) {
   busy.value = true; error.value = ''; notice.value = ''; secret.value = ''
   try { await stepUp.run(action) } catch (e) { report(e) } finally { busy.value = false }
 }
-function replace(item: AdminKey) { items.value = [normalizeItem(item), ...items.value.filter(key => key.id !== item.id)] }
+function syncDraftStatus() {
+  if (!draft.value || !editingID.value) return
+  const current = items.value.find(item => item.id === editingID.value)
+  if (current) draft.value.enabled = current.enabled
+}
+function replace(item: AdminKey) {
+  items.value = [normalizeItem(item), ...items.value.filter(key => key.id !== item.id)]
+  syncDraftStatus()
+}
 async function save() {
   if (!draft.value) return
   if (!draft.value.name.trim()) { error.value = t('adminAccessKeys.nameRequired'); return }
