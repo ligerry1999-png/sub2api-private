@@ -213,6 +213,51 @@ func (w *geminiFailingResponseWriter) Write([]byte) (int, error) { return 0, io.
 func (w *geminiFailingResponseWriter) WriteHeader(int)           {}
 func (w *geminiFailingResponseWriter) Flush()                    {}
 
+type geminiFailAfterWrites struct {
+	header    http.Header
+	remaining int
+}
+
+func (w *geminiFailAfterWrites) Header() http.Header { return w.header }
+func (w *geminiFailAfterWrites) WriteHeader(int)     {}
+func (w *geminiFailAfterWrites) Flush()              {}
+func (w *geminiFailAfterWrites) Write(p []byte) (int, error) {
+	if w.remaining == 0 {
+		return 0, io.ErrClosedPipe
+	}
+	w.remaining--
+	return len(p), nil
+}
+
+func TestGeminiForwardNative_WriteFailureBillsOnlyDeliveredImages(t *testing.T) {
+	firstImage := `data: {"candidates":[{"content":{"parts":[{"inlineData":{"mimeType":"image/png","data":"Zmlyc3Q="}}],"role":"model"}}]}` + "\n\n"
+	for _, test := range []struct {
+		name             string
+		stream           string
+		successfulWrites int
+		wantImages       int
+	}{
+		{"first image write fails", geminiAbortImageChunk, 0, 0},
+		{"second image write fails", firstImage + geminiAbortImageChunk, 2, 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			body := []byte(`{"contents":[{"role":"user","parts":[{"text":"draw a cat"}]}]}`)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			c, _ := gin.CreateTestContext(&geminiFailAfterWrites{header: http.Header{}, remaining: test.successfulWrites})
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-3-pro-image:streamGenerateContent", bytes.NewReader(body)).WithContext(ctx)
+			svc, upstream := newGeminiVertexAPIKeyTestService()
+			upstream.response = &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: &geminiAbortingStreamBody{data: bytes.NewReader([]byte(test.stream)), abortErr: context.Canceled, onAbort: cancel}}
+			result, err := svc.ForwardNative(context.Background(), c, geminiVertexAPIKeyTestAccount(""), "gemini-3-pro-image", "streamGenerateContent", true, body)
+			require.NoError(t, err)
+			require.True(t, result.ClientDisconnect)
+			require.Equal(t, test.wantImages, result.ImageCount)
+			require.Equal(t, 1290, result.Usage.OutputTokens, "retain upstream usage while excluding undelivered image charges")
+		})
+	}
+}
+
 func TestGeminiForwardAsChatCompletions_WriteFailureOnImageModelBillsNoImage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	reqBody := []byte(`{"model":"gemini-3-pro-image","stream":true,"messages":[{"role":"user","content":"draw a cat"}]}`)

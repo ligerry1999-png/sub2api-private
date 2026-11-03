@@ -2921,6 +2921,18 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 	fallback := &geminiSSEFallbackBody{}
 	clientDisconnect := false
 	finished := false
+	writeLine := func(value string) bool {
+		if clientDisconnect {
+			return false
+		}
+		n, writeErr := io.WriteString(c.Writer, value)
+		if writeErr != nil || n != len(value) {
+			clientDisconnect = true
+			return false
+		}
+		flusher.Flush()
+		return true
+	}
 
 	for {
 		line, err := reader.ReadString('\n')
@@ -2931,8 +2943,7 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 				payload := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
 				// Keepalive / done markers
 				if payload == "" || payload == "[DONE]" {
-					_, _ = io.WriteString(c.Writer, line)
-					flusher.Flush()
+					writeLine(line)
 				} else {
 					var rawToWrite string
 					rawToWrite = payload
@@ -2956,32 +2967,30 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 						usage = u
 					}
 					observer.ObserveGemini(rawBytes)
-					observeGeminiImageOutputs(c, rawBytes)
-
-					if gjson.GetBytes(rawBytes, "candidates.0.finishReason").String() != "" {
-						finished = true
-					}
 
 					if firstTokenMs == nil {
 						ms := int(time.Since(startTime).Milliseconds())
 						firstTokenMs = &ms
 					}
 
+					outbound := line
 					if isOAuth {
 						// SSE format requires double newline (\n\n) to separate events
-						_, _ = fmt.Fprintf(c.Writer, "data: %s\n\n", rawToWrite)
-					} else {
-						// Pass-through for AI Studio responses.
-						_, _ = io.WriteString(c.Writer, line)
+						outbound = "data: " + rawToWrite + "\n\n"
 					}
-					flusher.Flush()
+					if writeLine(outbound) {
+						// Keep upstream usage, but count only images accepted by the client writer.
+						observeGeminiImageOutputs(c, rawBytes)
+						if gjson.GetBytes(rawBytes, "candidates.0.finishReason").String() != "" {
+							finished = true
+						}
+					}
 				}
 			} else {
 				if !sawDataEvent {
 					fallback.AddLine(trimmed)
 				}
-				_, _ = io.WriteString(c.Writer, line)
-				flusher.Flush()
+				writeLine(line)
 			}
 		}
 
@@ -2989,7 +2998,7 @@ func (s *GeminiMessagesCompatService) handleNativeStreamingResponse(c *gin.Conte
 			break
 		}
 		if err != nil {
-			if !geminiStreamAbortedWithBillableOutput(c, err, usage) {
+			if !clientDisconnect && !geminiStreamAbortedWithBillableOutput(c, err, usage) {
 				return nil, err
 			}
 			clientDisconnect = true
