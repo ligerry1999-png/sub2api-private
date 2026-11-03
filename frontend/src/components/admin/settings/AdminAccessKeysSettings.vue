@@ -131,8 +131,9 @@ async function load() {
   error.value = ''
   try {
     const [result, allGroups] = await Promise.all([api.list(), getAllIncludingInactive()])
+    const previous = items.value.find(item => item.id === editingID.value)
     items.value = (result.items ?? []).map(normalizeItem)
-    syncDraftStatus()
+    syncDraftStatus(previous)
     permissions.value = result.permissions ?? []
     groups.value = allGroups ?? []
     loaded.value = true
@@ -151,14 +152,15 @@ async function mutate(action: () => Promise<void>) {
   busy.value = true; error.value = ''; notice.value = ''; secret.value = ''
   try { await stepUp.run(action) } catch (e) { report(e) } finally { busy.value = false }
 }
-function syncDraftStatus() {
+function syncDraftStatus(previous?: AdminKey) {
   if (!draft.value || !editingID.value) return
   const current = items.value.find(item => item.id === editingID.value)
-  if (current) draft.value.enabled = current.enabled
+  if (current && current.enabled !== previous?.enabled) draft.value.enabled = current.enabled
 }
 function replace(item: AdminKey) {
+  const previous = items.value.find(key => key.id === editingID.value)
   items.value = [normalizeItem(item), ...items.value.filter(key => key.id !== item.id)]
-  syncDraftStatus()
+  syncDraftStatus(previous)
 }
 async function save() {
   if (!draft.value) return

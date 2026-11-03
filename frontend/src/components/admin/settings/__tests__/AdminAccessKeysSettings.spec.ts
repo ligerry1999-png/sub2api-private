@@ -212,6 +212,30 @@ describe('管理员受限密钥配置', () => {
       wrapper.unmount()
     }
   })
+  it.each(['rotate', 'refresh'] as const)('%s 不改变服务器状态时保留尚未保存的状态修改', async action => {
+    const item = { id: 'pending-status', name: '原名称', description: '', enabled: true, key_prefix: 'prefix', expires_at: null, allowed_ips: [], policy: { rules: [], global_permissions: [] }, revoked_at: null }
+    mocks.list.mockResolvedValueOnce({ items: [item], permissions: [] })
+    if (action === 'refresh') mocks.list.mockResolvedValueOnce({ items: [item], permissions: [] })
+    else mocks.rotate.mockResolvedValueOnce({ item, key: 'rotated-secret' })
+    mocks.update.mockResolvedValueOnce({ ...item, name: '新名称', enabled: false })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const wrapper = mountSettings()
+    try {
+      await flushPromises()
+      await wrapper.findAll('button').find(button => button.text() === zh.editPermissions)!.trigger('click')
+      await wrapper.get('[data-test="name"]').setValue('新名称')
+      await wrapper.get('input[type="checkbox"]').setValue(false)
+      await wrapper.findAll('button').find(button => button.text() === zh[action])!.trigger('click')
+      await flushPromises()
+      expect((wrapper.get('input[type="checkbox"]').element as HTMLInputElement).checked).toBe(false)
+      await wrapper.get('[data-test="save"]').trigger('click')
+      await flushPromises()
+      expect(mocks.update).toHaveBeenLastCalledWith(item.id, expect.objectContaining({ name: '新名称', enabled: false }))
+    } finally {
+      confirm.mockRestore()
+      wrapper.unmount()
+    }
+  })
   it('空数组返回 null 时仍可创建默认无权限密钥', async () => {
     mocks.list.mockResolvedValueOnce({ items: null, permissions: null })
     mocks.create.mockResolvedValueOnce({ key: 'new-secret', item: { id: 'key-3', policy: { rules: null, global_permissions: null } } })
