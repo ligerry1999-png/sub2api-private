@@ -340,6 +340,8 @@ describe('admin UsageView native compaction filter', () => {
 describe('admin UsageView distribution metric toggles', () => {
   beforeEach(() => {
     vi.useFakeTimers()
+    // Keep this metric-toggle fixture away from daylight-saving transitions.
+    vi.setSystemTime(new Date('2026-10-20T12:00:00'))
     list.mockReset()
     getStats.mockReset()
     getSnapshotV2.mockReset()
