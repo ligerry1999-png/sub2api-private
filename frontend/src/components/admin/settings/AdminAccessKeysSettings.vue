@@ -25,13 +25,13 @@
         <p v-for="(rule, index) in item.policy.rules" :key="index">{{ t('adminAccessKeys.ruleLine', { index: index + 1, summary: ruleSummary(rule) }) }}</p>
       </div>
       <div v-if="!item.revoked_at" class="flex flex-wrap gap-2">
-        <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="edit(item)">{{ t('adminAccessKeys.editPermissions') }}</button>
-        <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="toggle(item)">{{ item.enabled ? t('adminAccessKeys.disable') : t('adminAccessKeys.enable') }}</button>
-        <button type="button" class="btn btn-secondary btn-sm" :disabled="busy" @click="rotateKey(item)">{{ t('adminAccessKeys.rotate') }}</button>
-        <button type="button" class="btn btn-secondary btn-sm text-red-600" :disabled="busy" @click="revokeKey(item)">{{ t('adminAccessKeys.revoke') }}</button>
+        <button type="button" class="btn btn-secondary btn-sm" :disabled="busy || loading" @click="edit(item)">{{ t('adminAccessKeys.editPermissions') }}</button>
+        <button type="button" class="btn btn-secondary btn-sm" :disabled="busy || loading" @click="toggle(item)">{{ item.enabled ? t('adminAccessKeys.disable') : t('adminAccessKeys.enable') }}</button>
+        <button type="button" class="btn btn-secondary btn-sm" :disabled="busy || loading" @click="rotateKey(item)">{{ t('adminAccessKeys.rotate') }}</button>
+        <button type="button" class="btn btn-secondary btn-sm text-red-600" :disabled="busy || loading" @click="revokeKey(item)">{{ t('adminAccessKeys.revoke') }}</button>
       </div>
       <div v-else>
-        <button type="button" class="btn btn-secondary btn-sm text-red-600" :disabled="busy" @click="deleteRecord(item)">{{ t('adminAccessKeys.deleteRecord') }}</button>
+        <button type="button" class="btn btn-secondary btn-sm text-red-600" :disabled="busy || loading" @click="deleteRecord(item)">{{ t('adminAccessKeys.deleteRecord') }}</button>
       </div>
     </div>
     <div v-if="draft" class="space-y-4 rounded-lg border border-gray-200 p-4 dark:border-dark-700">
@@ -64,7 +64,7 @@
           <label v-for="permission in category.permissions" :key="permission.id" class="flex gap-2"><input v-model="draft.policy.global_permissions" type="checkbox" :value="permission.id" />{{ permission.label }} <span class="text-xs text-gray-500">{{ permission.id }}</span></label>
         </fieldset>
       </fieldset>
-      <div class="flex gap-2"><button type="button" data-test="save" class="btn btn-primary" :disabled="busy" @click="save">{{ busy ? t('adminAccessKeys.processing') : t('adminAccessKeys.save') }}</button><button type="button" class="btn btn-secondary" :disabled="busy" @click="draft = null">{{ t('adminAccessKeys.cancel') }}</button></div>
+      <div class="flex gap-2"><button type="button" data-test="save" class="btn btn-primary" :disabled="busy || loading" @click="save">{{ busy ? t('adminAccessKeys.processing') : t('adminAccessKeys.save') }}</button><button type="button" class="btn btn-secondary" :disabled="busy || loading" @click="draft = null">{{ t('adminAccessKeys.cancel') }}</button></div>
     </div>
     <TotpStepUpDialog :controller="stepUp" />
   </section>
@@ -149,6 +149,7 @@ function edit(item?: AdminKey) {
   ips.value = item?.allowed_ips.join('\n') || ''
 }
 async function mutate(action: () => Promise<void>) {
+  if (busy.value || loading.value) return
   busy.value = true; error.value = ''; notice.value = ''; secret.value = ''
   try { await stepUp.run(action) } catch (e) { report(e) } finally { busy.value = false }
 }

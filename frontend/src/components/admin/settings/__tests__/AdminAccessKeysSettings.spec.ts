@@ -236,6 +236,34 @@ describe('管理员受限密钥配置', () => {
       wrapper.unmount()
     }
   })
+  it('刷新等待期间不允许保存或切换密钥，完成后使用确认的状态', async () => {
+    const item = { id: 'refresh-status', name: '原名称', description: '', enabled: true, key_prefix: 'prefix', expires_at: null, allowed_ips: [], policy: { rules: [], global_permissions: [] }, revoked_at: null }
+    mocks.list.mockResolvedValueOnce({ items: [item], permissions: [] })
+    let resolve!: (value: unknown) => void
+    const pending = new Promise(value => { resolve = value })
+    const wrapper = mountSettings()
+    try {
+      await flushPromises()
+      await wrapper.findAll('button').find(button => button.text() === zh.editPermissions)!.trigger('click')
+      await wrapper.get('[data-test="name"]').setValue('新名称')
+      mocks.list.mockReturnValueOnce(pending)
+      await wrapper.findAll('button').find(button => button.text() === zh.refresh)!.trigger('click')
+      expect(wrapper.get('[data-test="save"]').attributes('disabled')).toBeDefined()
+      const disable = wrapper.findAll('button').find(button => button.text() === zh.disable)!
+      expect(disable.attributes('disabled')).toBeDefined()
+      await disable.trigger('click')
+      expect(mocks.update).not.toHaveBeenCalled()
+      resolve({ items: [{ ...item, enabled: false }], permissions: [] })
+      await flushPromises()
+      mocks.update.mockResolvedValueOnce({ ...item, name: '新名称', enabled: false })
+      await wrapper.get('[data-test="save"]').trigger('click')
+      await flushPromises()
+      expect(mocks.update).toHaveBeenLastCalledWith(item.id, expect.objectContaining({ name: '新名称', enabled: false }))
+    } finally {
+      resolve({ items: [item], permissions: [] })
+      wrapper.unmount()
+    }
+  })
   it('空数组返回 null 时仍可创建默认无权限密钥', async () => {
     mocks.list.mockResolvedValueOnce({ items: null, permissions: null })
     mocks.create.mockResolvedValueOnce({ key: 'new-secret', item: { id: 'key-3', policy: { rules: null, global_permissions: null } } })
