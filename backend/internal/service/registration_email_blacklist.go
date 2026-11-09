@@ -229,6 +229,8 @@ func (s *SettingService) SetRegistrationEmailBlacklist(ctx context.Context, emai
 	if err != nil {
 		return nil, nil, err
 	}
+	s.registrationEmailBlacklistWriteMu.Lock()
+	defer s.registrationEmailBlacklistWriteMu.Unlock()
 	previous, err := s.GetRegistrationEmailBlacklist(ctx)
 	if err != nil {
 		return nil, nil, err

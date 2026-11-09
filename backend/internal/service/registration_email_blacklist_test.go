@@ -262,6 +262,57 @@ func TestSettingService_SetRegistrationEmailBlacklist_NotOverwrittenByInFlightRe
 	require.False(t, svc.IsRegistrationEmailBlacklisted(ctx, "old@gmail.com"))
 }
 
+// Delay the first save's return after its database write, so an unguarded
+// second save can commit and publish a newer list before the first publishes.
+type reorderedBlacklistSaveRepo struct {
+	*writableSettingRepoStub
+	firstCommitted chan struct{}
+	finishFirst    chan struct{}
+}
+
+func (s *reorderedBlacklistSaveRepo) Set(ctx context.Context, key, value string) error {
+	err := s.writableSettingRepoStub.Set(ctx, key, value)
+	if value == `["first@gmail.com"]` {
+		close(s.firstCommitted)
+		<-s.finishFirst
+	}
+	return err
+}
+
+func TestSettingService_ConcurrentBlacklistSavesPublishInWriteOrder(t *testing.T) {
+	repo := &reorderedBlacklistSaveRepo{
+		writableSettingRepoStub: newWritableSettingRepoStub(nil),
+		firstCommitted:          make(chan struct{}), finishFirst: make(chan struct{}),
+	}
+	svc := NewSettingService(repo, &config.Config{})
+	ctx := context.Background()
+	first, second := make(chan error, 1), make(chan error, 1)
+	go func() { _, _, err := svc.SetRegistrationEmailBlacklist(ctx, []string{"first@gmail.com"}); first <- err }()
+	<-repo.firstCommitted
+	go func() {
+		_, _, err := svc.SetRegistrationEmailBlacklist(ctx, []string{"second@gmail.com"})
+		second <- err
+	}()
+	var secondErr error
+	var secondCompleted bool
+	select {
+	case secondErr = <-second:
+		secondCompleted = true
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(repo.finishFirst)
+	require.NoError(t, <-first)
+	if !secondCompleted {
+		secondErr = <-second
+	}
+	require.NoError(t, secondErr)
+	stored, err := svc.GetRegistrationEmailBlacklist(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{"second@gmail.com"}, stored)
+	require.True(t, svc.IsRegistrationEmailBlacklisted(ctx, "second@gmail.com"), "cache must reflect the final write")
+	require.False(t, svc.IsRegistrationEmailBlacklisted(ctx, "first@gmail.com"))
+}
+
 func TestSettingService_SetRegistrationEmailBlacklist_ReportsAddedAndPersists(t *testing.T) {
 	repo := newWritableSettingRepoStub(map[string]string{
 		SettingKeyRegistrationEmailBlacklist: `["old@gmail.com","keep@gmail.com"]`,

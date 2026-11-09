@@ -136,7 +136,11 @@ func newBoundedSSESplit(cfg *config.Config, maxLineSize int, next bufio.SplitFun
 				return 0, nil, err
 			}
 		} else if int64(len(data)) > limits.maxBytes-limits.bytes {
-			return 0, nil, limits.exceeded()
+			// A CR split from its LF may be the blank event separator, which
+			// resets the budget. Allow just that single byte of lookahead.
+			if len(data) != 1 || data[0] != '\r' {
+				return 0, nil, limits.exceeded()
+			}
 		}
 		return advance, token, nil
 	}

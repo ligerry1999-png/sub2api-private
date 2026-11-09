@@ -88,6 +88,21 @@ func TestBoundedSSESplitResetsAtEventBoundaryAndPreservesEOF(t *testing.T) {
 	require.Equal(t, []string{"data: abcd", "", "data: last"}, lines)
 }
 
+func TestBoundedSSESplitAllowsSplitCRLFAtEventLimit(t *testing.T) {
+	cfg := &config.Config{Gateway: config.GatewayConfig{SSEEventMaxBytes: 9}}
+	scanner := bufio.NewScanner(io.MultiReader(
+		strings.NewReader("data: x\r\n"), strings.NewReader("\r"),
+		strings.NewReader("\n"), strings.NewReader("data: y\r\n\r\n"),
+	))
+	scanner.Split(newBoundedSSESplit(cfg, 1<<20, nil))
+	var lines []string
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	require.NoError(t, scanner.Err())
+	require.Equal(t, []string{"data: x", "", "data: y", ""}, lines)
+}
+
 func TestBoundedSSELineReaderPreservesLargeImageFrame(t *testing.T) {
 	payload := "data: {\"b64_json\":\"" + strings.Repeat("A", 128<<10) + "\"}\r\n"
 	cfg := &config.Config{Gateway: config.GatewayConfig{MaxLineSize: 256 << 10, SSEQueueMaxBytes: 1024}}
