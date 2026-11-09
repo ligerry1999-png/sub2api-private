@@ -138,6 +138,12 @@ func grokBillingHasAuthoritativeQuota(billing *xai.BillingSummary) bool {
 }
 
 func (s *GrokQuotaService) ProbeUsage(ctx context.Context, accountID int64) (*GrokQuotaProbeResult, error) {
+	// As with billing, authorize every caller before it can share a probe result.
+	if s != nil {
+		if err := scopedAccountIDAccess(ctx, s.accountRepo, accountID, "accounts.usage.read", false); err != nil {
+			return nil, err
+		}
+	}
 	return s.runProbeFlight(ctx, "active:"+strconv.FormatInt(accountID, 10), func(sharedCtx context.Context) (*GrokQuotaProbeResult, error) {
 		return s.probeUsage(sharedCtx, accountID)
 	})

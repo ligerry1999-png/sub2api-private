@@ -166,14 +166,44 @@ func TestScopedAdminGrokQuotaReloadRechecksScope(t *testing.T) {
 	require.Equal(t, 404, infraerrors.Code(err))
 }
 
-func TestScopedAdminGrokBillingChecksScopeBeforeJoiningFlight(t *testing.T) {
-	a := &Account{ID: 1, Platform: PlatformGrok, Type: AccountTypeOAuth, GroupIDs: []int64{2}}
-	svc := &GrokQuotaService{accountRepo: &stubQuotaAccountRepo{accounts: map[int64]*Account{1: a}}}
-	ctx := scopedStatisticsServiceContext("accounts.usage.read")
-	adminaccess.FromContext(ctx).Policy.Rules[0].Platforms = []string{PlatformGrok}
-	result, err := svc.ProbeBilling(ctx, 1)
-	require.Nil(t, result)
-	require.Equal(t, 404, infraerrors.Code(err))
+func TestScopedAdminGrokQuotaChecksScopeBeforeJoiningFlight(t *testing.T) {
+	for _, tc := range []struct {
+		key   string
+		probe func(*GrokQuotaService, context.Context, int64) (*GrokQuotaProbeResult, error)
+	}{
+		{"billing:1", (*GrokQuotaService).ProbeBilling},
+		{"active:1", (*GrokQuotaService).ProbeUsage},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				a := &Account{ID: 1, Platform: PlatformGrok, Type: AccountTypeOAuth, GroupIDs: []int64{2}}
+				svc := &GrokQuotaService{accountRepo: &stubQuotaAccountRepo{accounts: map[int64]*Account{1: a}}}
+				ctx := scopedStatisticsServiceContext("accounts.usage.read")
+				adminaccess.FromContext(ctx).Policy.Rules[0].Platforms = []string{PlatformGrok}
+
+				started, release := make(chan struct{}), make(chan struct{})
+				original := svc.probeFlight.DoChan(tc.key, func() (any, error) {
+					close(started)
+					<-release
+					return &GrokQuotaProbeResult{}, nil
+				})
+				<-started
+				var result *GrokQuotaProbeResult
+				var err error
+				done := make(chan struct{})
+				go func() {
+					defer close(done)
+					result, err = tc.probe(svc, ctx, 1)
+				}()
+				synctest.Wait()
+				close(release)
+				require.NoError(t, (<-original).Err)
+				<-done
+				require.Nil(t, result)
+				require.Equal(t, "SCOPED_ACCOUNT_NOT_FOUND", infraerrors.Reason(err))
+			})
+		})
+	}
 }
 func TestScopedAdminGrokSharedFlightPreservesPrincipal(t *testing.T) {
 	svc := &GrokQuotaService{}
