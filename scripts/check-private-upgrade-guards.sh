@@ -127,6 +127,9 @@ for migration in 246_enable_gemini_image_generation_groups.sql 247_scoped_admin_
   test -f "backend/migrations/$migration" || fail "v0.2.19 migration missing: $migration"
   assert_contains "$database_rehearsal" "$migration"
 done
+assert_contains "$database_rehearsal" "validate_v0220_migrations"
+test -f backend/migrations/249_mcp_oauth.sql || fail "v0.2.20 MCP OAuth migration missing"
+assert_contains "$database_rehearsal" "249_mcp_oauth.sql"
 # Keep paid-generation recovery and shared finalization from private releases #16/#17.
 assert_contains "backend/internal/service/openai_images_delivery_recovery.go" "finalization"
 test -f backend/internal/service/openai_images_delivery_recovery_test.go || fail "image delivery recovery tests missing"
@@ -186,7 +189,7 @@ fi
 test "$actual_migration_sha" = "$expected_migration_sha" || \
   fail "backend/migrations/136_image_logs.sql checksum changed"
 
-test "$(tr -d '\r\n' < backend/cmd/server/VERSION)" = "0.2.19-private.1" || \
+test "$(tr -d '\r\n' < backend/cmd/server/VERSION)" = "0.2.20-private.1" || \
   fail "private version marker changed unexpectedly"
 
 printf 'private upgrade guards passed\n'

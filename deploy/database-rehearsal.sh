@@ -265,6 +265,15 @@ image_policy_snapshot() {
      ) ORDER BY id)::text, '[]') FROM groups;"
 }
 
+validate_v0220_migrations() {
+  assert_query_equal "v0.2.20 migration record" 1 \
+    "SELECT COUNT(*) FROM schema_migrations WHERE filename = '249_mcp_oauth.sql';"
+  assert_query_equal "MCP OAuth storage" t \
+    "SELECT to_regclass('public.mcp_oauth_grants') IS NOT NULL
+        AND to_regclass('public.mcp_oauth_codes') IS NOT NULL
+        AND to_regclass('public.mcp_oauth_credentials') IS NOT NULL;"
+}
+
 validate_v0219_migrations() {
   assert_query_equal "v0.2.19 migration records" 3 \
     "SELECT COUNT(*) FROM schema_migrations WHERE filename IN (
@@ -614,6 +623,7 @@ assert_query_equal "migration 191 passkey tables" t \
 validate_v021_migrations
 validate_v0217_migrations
 validate_v0219_migrations
+validate_v0220_migrations
 
 after_migrations="$(docker exec "$postgres" psql -U sub2api -d sub2api -Atqc 'SELECT COUNT(*) FROM schema_migrations;')"
 if git -C "$CANDIDATE_DIR" diff --quiet "$PREVIOUS_SHA" "$CANDIDATE_SHA" -- backend/migrations; then
@@ -649,6 +659,7 @@ assert_equal "candidate-second private config digest" "$before_private_config_sn
 validate_v021_migrations
 validate_v0217_migrations
 validate_v0219_migrations
+validate_v0220_migrations
 assert_query_equal "invalid database indexes" 0 \
   "SELECT COUNT(*) FROM pg_index WHERE NOT indisvalid;"
 
