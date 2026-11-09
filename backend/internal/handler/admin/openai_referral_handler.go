@@ -59,9 +59,8 @@ func (h *OpenAIOAuthHandler) RefreshReferrals(c *gin.Context) {
 		response.Error(c, http.StatusBadGateway, "Empty invitation eligibility response")
 		return
 	}
-	eligibility = h.scopedReferralDTO(c, eligibility)
 	cacheErr := h.referralService.CacheReferralSnapshot(c.Request.Context(), id, eligibility)
-	response.Success(c, openAIReferralRefreshResponse{Eligibility: eligibility, CachePersisted: cacheErr == nil})
+	response.Success(c, openAIReferralRefreshResponse{Eligibility: h.scopedReferralDTO(c, eligibility), CachePersisted: cacheErr == nil})
 }
 
 func (h *OpenAIOAuthHandler) SendReferralInvite(c *gin.Context) {
@@ -99,11 +98,10 @@ func (h *OpenAIOAuthHandler) SendReferralInvite(c *gin.Context) {
 	// invalidating a stale snapshot) a fresh, independent deadline.
 	cacheCtx, cancelCache := context.WithTimeout(baseCtx, 3*time.Second)
 	defer cancelCache()
-	eligibility = h.scopedReferralDTO(c, eligibility)
 	cacheErr := h.referralService.CacheReferralSnapshot(cacheCtx, id, eligibility)
-	responseEligibility := eligibility
-	if !h.scopedOpenAIHasPermission(c, id, "openai.referrals.read", true) {
-		responseEligibility = nil
+	var responseEligibility *service.OpenAIReferralEligibility
+	if h.scopedOpenAIHasPermission(c, id, "openai.referrals.read", true) {
+		responseEligibility = h.scopedReferralDTO(c, eligibility)
 	}
 	response.Success(c, openAIReferralSendResponse{
 		OpenAIReferralSendResult:      *result,

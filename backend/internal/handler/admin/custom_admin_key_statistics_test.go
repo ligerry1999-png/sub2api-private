@@ -160,16 +160,19 @@ func TestScopedAdminAccountScopeAndShadowSource(t *testing.T) {
 func TestScopedAdminMutationResponseRequiresReadPermission(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	for _, read := range []bool{false, true} {
-		for _, kind := range []string{"reset", "invite"} {
+		for _, kind := range []string{"reset", "invite", "refresh"} {
 			t.Run(fmt.Sprintf("%s/read=%v", kind, read), func(t *testing.T) {
 				count := 2
 				svc := &scopedStatisticsAccounts{accounts: map[int64]*service.Account{1: {ID: 1, Platform: "openai", Type: "oauth", GroupIDs: []int64{1}}}}
 				quota := &openAIQuotaWorkflowStub{resetResult: &service.OpenAIQuotaResetResult{Code: "success"}, queryResult: &service.OpenAIQuotaUsage{RateLimitResetCredits: &service.OpenAIRateLimitResetCredits{AvailableCount: 3}, Email: "IDENTITY_SECRET"}}
-				referral := &referralHandlerStub{eligibility: &service.OpenAIReferralEligibility{ShouldShow: true, AvailableInvites: &count}}
+				referral := &referralHandlerStub{eligibility: &service.OpenAIReferralEligibility{ShouldShow: true, AvailableInvites: &count, Title: "REFERRAL_PRIVATE_TITLE"}}
 				h := &OpenAIOAuthHandler{adminService: svc, quotaService: quota, referralService: referral, rateLimitService: &openAIAccountStateRecovererStub{}}
 				action, readAction, path := "openai.quota.reset", "openai.quota.read", "/1/reset"
-				if kind == "invite" {
+				switch kind {
+				case "invite":
 					action, readAction, path = "openai.referrals.invite", "openai.referrals.read", "/1/invite"
+				case "refresh":
+					action, readAction, path = "openai.referrals.read", "openai.referrals.read", "/1/refresh"
 				}
 				r := gin.New()
 				r.Use(func(c *gin.Context) {
@@ -181,6 +184,7 @@ func TestScopedAdminMutationResponseRequiresReadPermission(t *testing.T) {
 				})
 				r.POST("/:id/reset", h.ResetQuota)
 				r.POST("/:id/invite", h.SendReferralInvite)
+				r.POST("/:id/refresh", h.RefreshReferrals)
 				w := httptest.NewRecorder()
 				r.ServeHTTP(w, httptest.NewRequest("POST", path, strings.NewReader(`{"email":"friend@example.com","program_id":"codex_referral_consumer","confirmed":true}`)))
 				require.Equal(t, 200, w.Code, w.Body.String())
@@ -193,8 +197,15 @@ func TestScopedAdminMutationResponseRequiresReadPermission(t *testing.T) {
 						require.NotContains(t, w.Body.String(), "available_count")
 					}
 				} else {
-					require.Equal(t, 1, referral.sends)
-					if read {
+					if kind == "invite" {
+						require.Equal(t, 1, referral.sends)
+					} else {
+						require.Zero(t, referral.sends)
+					}
+					require.NotContains(t, w.Body.String(), "REFERRAL_PRIVATE_TITLE")
+					require.NotNil(t, referral.cached)
+					require.Equal(t, "REFERRAL_PRIVATE_TITLE", referral.cached.Title, "scoped responses must not strip the shared snapshot")
+					if read || kind == "refresh" {
 						require.Contains(t, w.Body.String(), "available_invites")
 					} else {
 						require.NotContains(t, w.Body.String(), "available_invites")
