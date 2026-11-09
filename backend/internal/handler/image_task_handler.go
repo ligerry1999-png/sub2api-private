@@ -109,6 +109,7 @@ func (h *AsyncImageHandler) Submit(c *gin.Context) {
 
 	taskCtx, recorder, cancel, err := newAsyncImageContext(c, body, h.tasks.ExecutionTimeout())
 	if err != nil {
+		asyncRelease()
 		if !middleware2.RejectRequestBodyMemoryOverload(c, err) {
 			imageTaskError(c, service.ErrImageTaskUnavailable)
 		}

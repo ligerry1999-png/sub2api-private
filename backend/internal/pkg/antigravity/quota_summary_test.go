@@ -5,8 +5,12 @@ package antigravity
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -75,5 +79,22 @@ func TestClient_RetrieveUserQuotaSummaryFromURL_Errors(t *testing.T) {
 			t.Errorf("status %d body %q must be an error", tc.status, tc.body)
 		}
 		server.Close()
+	}
+}
+
+func TestClient_RetrieveUserQuotaSummaryFallsBackAfterConnectionError(t *testing.T) {
+	withMockBaseURLs(t, []string{"https://unreachable.example", "https://backup.example"})
+	client := &Client{httpClient: &http.Client{Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Host == "unreachable.example" {
+			return nil, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
+		}
+		if req.URL.Host != "backup.example" {
+			t.Fatalf("unexpected URL: %s", req.URL)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(quotaSummaryBody))}, nil
+	})}}
+	summary, err := client.RetrieveUserQuotaSummary(context.Background(), "tok", "proj")
+	if err != nil || summary == nil || len(summary.Groups) != 2 {
+		t.Fatalf("backup endpoint must return quota summary: %+v, %v", summary, err)
 	}
 }

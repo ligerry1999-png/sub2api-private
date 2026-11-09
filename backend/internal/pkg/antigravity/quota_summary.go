@@ -52,7 +52,7 @@ func (c *Client) RetrieveUserQuotaSummary(ctx context.Context, accessToken, proj
 			return summary, nil
 		}
 		lastErr = err
-		if urlIdx < len(BaseURLs)-1 && shouldFallbackToNextURL(nil, status) {
+		if urlIdx < len(BaseURLs)-1 && ctx.Err() == nil && shouldFallbackToNextURL(err, status) {
 			continue
 		}
 		return nil, err

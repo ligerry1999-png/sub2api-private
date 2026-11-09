@@ -179,6 +179,7 @@ func TestAsyncImageHandlerTaskUsesOwnBodyReservation(t *testing.T) {
 // A body the request already holds moves to the task instead of being charged
 // twice.
 func TestAsyncImageHandlerSubmitRejectsWhenBodyCannotBeRetained(t *testing.T) {
+	t.Setenv("ASYNC_IMAGE_MAX_CONCURRENT", "1")
 	requestBody := `{"model":"gpt-image-1","prompt":"cat"}`
 	for _, tt := range []struct {
 		name          string
@@ -192,7 +193,7 @@ func TestAsyncImageHandlerSubmitRejectsWhenBodyCannotBeRetained(t *testing.T) {
 			gin.SetMode(gin.TestMode)
 			store := &asyncImageMemoryStore{tasks: make(map[string]*service.ImageTaskRecord)}
 			tasks := service.NewImageTaskServiceWithUploader(store, nil, time.Hour, time.Minute)
-			h := &AsyncImageHandler{tasks: tasks}
+			h := &AsyncImageHandler{tasks: tasks, openAI: &OpenAIGatewayHandler{asyncImageLimiter: &imageConcurrencyLimiter{}}}
 			ran := make(chan struct{})
 			h.execute = func(_ string, c *gin.Context) {
 				if !tt.chargeRequest {
@@ -211,6 +212,7 @@ func TestAsyncImageHandlerSubmitRejectsWhenBodyCannotBeRetained(t *testing.T) {
 					GroupID: &groupID,
 					Group:   &service.Group{ID: groupID, Platform: service.PlatformOpenAI, AllowImageGeneration: true},
 				})
+				c.Set(string(middleware2.ContextKeyUser), middleware2.AuthSubject{UserID: 7})
 				ctx, release := pkghttputil.WithRequestBodyMemoryBudget(c.Request.Context(), budget)
 				defer release()
 				c.Request = c.Request.WithContext(ctx)
@@ -235,6 +237,9 @@ func TestAsyncImageHandlerSubmitRejectsWhenBodyCannotBeRetained(t *testing.T) {
 			if !tt.chargeRequest {
 				require.Equal(t, "1", w.Header().Get("Retry-After"))
 				require.Empty(t, store.tasks)
+				release, available := h.openAI.tryAcquireAsyncImageExecution()
+				require.True(t, available, "rejected task must return its execution slot")
+				release()
 				return
 			}
 			select {
