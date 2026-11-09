@@ -104,9 +104,7 @@ func (st *anthropicCompatStream) nextLine() (string, bool) {
 	for {
 		line, err := st.pump.nextOrClientGone(st.clientGone)
 		if err == nil {
-			if payload, ok := extractOpenAISSEDataLine(line); ok && strings.TrimSpace(payload) == "[DONE]" {
-				st.sawTerminal = true
-			}
+			st.observeDoneLine(line)
 			return line, true
 		}
 		if errors.Is(err, errAnthropicNativeClientGone) {
@@ -140,6 +138,15 @@ func (st *anthropicCompatStream) nextLine() (string, bool) {
 		}
 		return "", false
 	}
+}
+
+// observeDoneLine accepts the terminal marker used by some compatible upstreams.
+func (st *anthropicCompatStream) observeDoneLine(line string) bool {
+	if payload, ok := extractOpenAISSEDataLine(line); ok && strings.TrimSpace(payload) == "[DONE]" {
+		st.sawTerminal = true
+		return true
+	}
+	return false
 }
 
 // observe 记录决定收尾方式的上游事件。收到上游 error 事件时关闭上游 body，

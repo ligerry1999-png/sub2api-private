@@ -247,10 +247,13 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 
 	var finalResp *apicompat.AnthropicResponse
 	var usage ClaudeUsage
-	streamStatus := &anthropicCompatStream{body: resp.Body}
+	streamStatus := &anthropicCompatStream{body: resp.Body, maxLineSize: maxLineSize}
 
 	for scanner.Scan() {
 		line := scanner.Text()
+		if streamStatus.observeDoneLine(line) {
+			break
+		}
 		// SSE 规范允许 `event:xxx`（冒号后无空格）：Kimi 等 Anthropic 兼容上游
 		// 返回紧凑格式，严格匹配 "event: " 会丢弃全部事件（#4653 同根因）。
 		if _, ok := extractOpenAISSEEventLine(line); !ok {
@@ -260,7 +263,11 @@ func (s *GatewayService) handleCCBufferedFromAnthropic(
 		if !scanner.Scan() {
 			break
 		}
-		payload, ok := extractOpenAISSEDataLine(scanner.Text())
+		dataLine := scanner.Text()
+		if streamStatus.observeDoneLine(dataLine) {
+			break
+		}
+		payload, ok := extractOpenAISSEDataLine(dataLine)
 		if !ok {
 			continue
 		}

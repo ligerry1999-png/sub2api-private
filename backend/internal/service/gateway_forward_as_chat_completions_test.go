@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -246,4 +247,49 @@ func TestHandleCCStreamingFromAnthropic_PreservesMessageStartCacheUsageAndReason
 	require.NotNil(t, result.ReasoningEffort)
 	require.Equal(t, "medium", *result.ReasoningEffort)
 	require.Contains(t, rec.Body.String(), `[DONE]`)
+}
+
+func TestAnthropicBufferedCompatibilityRecognizesDone(t *testing.T) {
+	const response = `event: message_start
+data: {"type":"message_start","message":{"id":"msg_done","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.5","usage":{"input_tokens":10}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"relay done"}}
+
+`
+	body := response
+	for _, route := range []string{"chat", "responses"} {
+		for _, tt := range []struct {
+			name     string
+			terminal string
+		}{
+			{name: "bare done", terminal: "data: [DONE]\n\n"},
+			{name: "named done", terminal: "event: done\ndata:[DONE]\n\n"},
+			{name: "missing terminal"},
+		} {
+			t.Run(route+"/"+tt.name, func(t *testing.T) {
+				rec := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(rec)
+				resp := &http.Response{Body: io.NopCloser(strings.NewReader(body + tt.terminal))}
+				svc := &GatewayService{}
+				var result *ForwardResult
+				var err error
+				if route == "chat" {
+					result, err = svc.handleCCBufferedFromAnthropic(resp, c, "model", "claude-sonnet-4.5", nil, time.Now())
+				} else {
+					result, err = svc.handleResponsesBufferedStreamingResponse(resp, c, "model", "claude-sonnet-4.5", nil, time.Now(), apicompat.ResponsesClientToolMapping{})
+				}
+				require.NotNil(t, result)
+				require.Equal(t, 10, result.Usage.InputTokens)
+				if tt.terminal == "" {
+					require.Error(t, err)
+					require.Equal(t, http.StatusBadGateway, rec.Code)
+					return
+				}
+				require.NoError(t, err)
+				require.Equal(t, http.StatusOK, rec.Code)
+				require.Contains(t, rec.Body.String(), "relay done")
+			})
+		}
+	}
 }

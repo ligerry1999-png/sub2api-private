@@ -397,10 +397,13 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 	// Accumulate the final Anthropic response from streaming events
 	var finalResp *apicompat.AnthropicResponse
 	var usage ClaudeUsage
-	streamStatus := &anthropicCompatStream{body: resp.Body}
+	streamStatus := &anthropicCompatStream{body: resp.Body, maxLineSize: maxLineSize}
 
 	for scanner.Scan() {
 		line := scanner.Text()
+		if streamStatus.observeDoneLine(line) {
+			break
+		}
 		eventType, ok := parseAnthropicSSEField(line, "event")
 		if !ok {
 			continue
@@ -411,6 +414,9 @@ func (s *GatewayService) handleResponsesBufferedStreamingResponse(
 			break
 		}
 		dataLine := scanner.Text()
+		if streamStatus.observeDoneLine(dataLine) {
+			break
+		}
 		payload, ok := parseAnthropicSSEField(dataLine, "data")
 		if !ok {
 			continue
