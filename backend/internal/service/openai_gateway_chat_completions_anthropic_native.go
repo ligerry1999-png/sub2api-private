@@ -172,7 +172,7 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 	// 读间隔上限：上游挂住 SSE 时中止组装（缓冲路径尚未提交响应头，可回 502）。
 	streamInterval := anthropicNativeStreamInterval(s.cfg)
 	pump := newAnthropicNativeLinePump(scanner, streamInterval, s.cfg)
-	streamStatus := &anthropicCompatStream{body: resp.Body}
+	streamStatus := &anthropicCompatStream{body: resp.Body, maxLineSize: maxLineSize}
 	defer pump.stop()
 
 	logReadErr := func(err error) {
@@ -205,6 +205,9 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 		}
 		// SSE 规范允许 `event:xxx`（冒号后无空格）：Kimi 等 Anthropic 兼容上游
 		// 返回紧凑格式，严格匹配 "event: " 会丢弃全部事件（#4653 同根因）。
+		if streamStatus.observeDoneLine(line) {
+			break
+		}
 		if _, ok := extractOpenAISSEEventLine(line); !ok {
 			continue
 		}
@@ -216,6 +219,9 @@ func (s *OpenAIGatewayService) handleCCBufferedFromNativeAnthropic(
 			}
 			logReadErr(rerr)
 			streamStatus.readErr = rerr
+			break
+		}
+		if streamStatus.observeDoneLine(dataLine) {
 			break
 		}
 		payload, ok := extractOpenAISSEDataLine(dataLine)
@@ -378,7 +384,7 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 	// scanner.Scan() 永久阻塞（见 anthropic native pump 文件注释）。
 	streamInterval := anthropicNativeStreamInterval(s.cfg)
 	pump := newAnthropicNativeLinePump(scanner, streamInterval, s.cfg)
-	streamStatus := &anthropicCompatStream{body: resp.Body}
+	streamStatus := &anthropicCompatStream{body: resp.Body, maxLineSize: maxLineSize}
 	defer pump.stop()
 
 	logReadErr := func(err error) {
@@ -467,6 +473,9 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 			streamStatus.readErr = rerr
 			break
 		}
+		if streamStatus.observeDoneLine(line) {
+			break
+		}
 		if _, ok := extractOpenAISSEEventLine(line); !ok {
 			continue
 		}
@@ -479,6 +488,9 @@ func (s *OpenAIGatewayService) handleCCStreamingFromNativeAnthropic(
 			// EOF / 读错误：事件行后流终止，进入 finalize。
 			logReadErr(rerr)
 			streamStatus.readErr = rerr
+			break
+		}
+		if streamStatus.observeDoneLine(dataLine) {
 			break
 		}
 		payload, ok := extractOpenAISSEDataLine(dataLine)

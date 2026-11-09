@@ -249,16 +249,18 @@ func TestHandleCCStreamingFromAnthropic_PreservesMessageStartCacheUsageAndReason
 	require.Contains(t, rec.Body.String(), `[DONE]`)
 }
 
-func TestAnthropicBufferedCompatibilityRecognizesDone(t *testing.T) {
+func TestAnthropicCompatibilityRecognizesDone(t *testing.T) {
 	const response = `event: message_start
 data: {"type":"message_start","message":{"id":"msg_done","type":"message","role":"assistant","content":[],"model":"claude-sonnet-4.5","usage":{"input_tokens":10}}}
 
 event: content_block_start
-data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"relay done"}}
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"relay done"}}
 
 `
-	body := response
-	for _, route := range []string{"chat", "responses"} {
+	for _, route := range []string{"chat", "responses", "native chat", "native responses", "native chat stream", "native responses stream"} {
 		for _, tt := range []struct {
 			name     string
 			terminal string
@@ -270,25 +272,57 @@ data: {"type":"content_block_start","index":0,"content_block":{"type":"text","te
 			t.Run(route+"/"+tt.name, func(t *testing.T) {
 				rec := httptest.NewRecorder()
 				c, _ := gin.CreateTestContext(rec)
-				resp := &http.Response{Body: io.NopCloser(strings.NewReader(body + tt.terminal))}
-				svc := &GatewayService{}
-				var result *ForwardResult
+				resp := &http.Response{Body: io.NopCloser(strings.NewReader(response + tt.terminal))}
+				var tokens int
 				var err error
-				if route == "chat" {
-					result, err = svc.handleCCBufferedFromAnthropic(resp, c, "model", "claude-sonnet-4.5", nil, time.Now())
+				const model = "claude-sonnet-4.5"
+				now := time.Now()
+				mapping := apicompat.ResponsesClientToolMapping{}
+				terminal := ""
+				if strings.HasPrefix(route, "native ") {
+					svc := &OpenAIGatewayService{}
+					var result *OpenAIForwardResult
+					switch route {
+					case "native chat":
+						result, err = svc.handleCCBufferedFromNativeAnthropic(resp, c, "model", model, model, nil, now)
+					case "native responses":
+						result, err = svc.handleResponsesBufferedFromNativeAnthropic(resp, c, "model", model, model, nil, now, mapping)
+					case "native chat stream":
+						result, err = svc.handleCCStreamingFromNativeAnthropic(resp, c, "model", model, model, nil, now)
+						terminal = "data: [DONE]"
+					case "native responses stream":
+						result, err = svc.handleResponsesStreamingFromNativeAnthropic(resp, c, "model", model, model, nil, now, mapping)
+						terminal = "event: response.completed"
+					}
+					require.NotNil(t, result)
+					tokens = result.Usage.InputTokens
 				} else {
-					result, err = svc.handleResponsesBufferedStreamingResponse(resp, c, "model", "claude-sonnet-4.5", nil, time.Now(), apicompat.ResponsesClientToolMapping{})
+					svc := &GatewayService{}
+					var result *ForwardResult
+					if route == "chat" {
+						result, err = svc.handleCCBufferedFromAnthropic(resp, c, "model", model, nil, now)
+					} else {
+						result, err = svc.handleResponsesBufferedStreamingResponse(resp, c, "model", model, nil, now, mapping)
+					}
+					require.NotNil(t, result)
+					tokens = result.Usage.InputTokens
 				}
-				require.NotNil(t, result)
-				require.Equal(t, 10, result.Usage.InputTokens)
+				require.Equal(t, 10, tokens)
 				if tt.terminal == "" {
 					require.Error(t, err)
-					require.Equal(t, http.StatusBadGateway, rec.Code)
+					if terminal == "" {
+						require.Equal(t, http.StatusBadGateway, rec.Code)
+					} else {
+						require.NotContains(t, rec.Body.String(), terminal)
+					}
 					return
 				}
 				require.NoError(t, err)
 				require.Equal(t, http.StatusOK, rec.Code)
 				require.Contains(t, rec.Body.String(), "relay done")
+				if terminal != "" {
+					require.Contains(t, rec.Body.String(), terminal)
+				}
 			})
 		}
 	}
