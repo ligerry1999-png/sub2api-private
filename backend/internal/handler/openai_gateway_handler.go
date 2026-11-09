@@ -864,25 +864,29 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 			sessionID := service.ExtractClientSessionID(c)
 			cyberBlocked := service.GetOpsCyberPolicy(c) != nil
 			channelUsageFields := clientRequestedUsageFields(c, channelMapping, reqModel, res.UpstreamModel)
+			// Capture only the image log fields needed by the queued task while
+			// the request still owns its Gin context and body.
+			imageLogEndpoint := "/v1/responses"
+			imageLogPrompt := ""
+			if len(res.ImageLogResults) > 0 {
+				if c.Request.URL != nil && strings.TrimSpace(c.Request.URL.Path) != "" {
+					imageLogEndpoint = c.Request.URL.Path
+				}
+				imageLogPrompt = imageLogPromptFromResponsesBody(body)
+			}
 			h.submitOpenAIUsageRecordTask(c.Request.Context(), res, func(ctx context.Context) {
-				// Responses 的 image_generation 工具结果已经在转发层解析为
-				// ImageLogResults。和计费放在同一个必达任务里，避免请求成功但
-				// 日志异步漏写；API Key、分组和账号都取自本次认证上下文。
+				// Keep the image log in the same mandatory task as usage recording.
 				if len(res.ImageLogResults) > 0 {
-					endpoint := "/v1/responses"
-					if c != nil && c.Request != nil && c.Request.URL != nil && strings.TrimSpace(c.Request.URL.Path) != "" {
-						endpoint = c.Request.URL.Path
-					}
 					requestID := firstNonEmptyString(res.RequestID, res.ResponseID)
 					h.gatewayService.RecordImageGenerationLog(
 						ctx,
-						c,
+						apiKey,
 						account,
 						requestID,
 						"sub2api_responses",
-						endpoint,
+						imageLogEndpoint,
 						reqModel,
-						imageLogPromptFromResponsesBody(body),
+						imageLogPrompt,
 						res.ImageSize,
 						res.Duration,
 						res.ImageLogResults,
@@ -3257,17 +3261,21 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 				turnRecordPricingAt := turnPricing.currentOr(turnStart)
 				turnBillingAPIKey := turnBillingAPIKeys.forTurn(turn, apiKey)
 				cyberBlocked := service.GetOpsCyberPolicy(c) != nil
+				imageLogPrompt := ""
+				if len(result.ImageLogResults) > 0 {
+					imageLogPrompt = imageLogPromptFromResponsesBody(cyberBlockBody)
+				}
 				h.submitOpenAIUsageRecordTask(ctx, result, func(taskCtx context.Context) {
 					if len(result.ImageLogResults) > 0 {
 						h.gatewayService.RecordImageGenerationLog(
 							taskCtx,
-							c,
+							apiKey,
 							account,
 							firstNonEmptyString(result.RequestID, result.ResponseID),
 							"sub2api_responses_ws",
 							"/v1/responses",
 							turnRequestedModel,
-							imageLogPromptFromResponsesBody(cyberBlockBody),
+							imageLogPrompt,
 							result.ImageSize,
 							result.Duration,
 							result.ImageLogResults,

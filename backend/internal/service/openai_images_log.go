@@ -66,16 +66,14 @@ func (s *OpenAIGatewayService) recordOpenAIImagesLog(
 	if !startTime.IsZero() {
 		duration = time.Since(startTime)
 	}
-	s.recordImageGenerationLog(ctx, c, account, requestID, source, parsed.Endpoint, requestModel, parsed.Prompt, parsed.SizeTier, duration, results, metadata)
+	s.RecordImageGenerationLog(ctx, getAPIKeyFromContext(c), account, requestID, source, parsed.Endpoint, requestModel, parsed.Prompt, parsed.SizeTier, duration, results, metadata)
 }
 
-// RecordImageGenerationLog records a successful image result from any gateway
-// route. The API key is read from the authenticated Gin context, so newly
-// added channels/accounts/groups are included automatically without a static
-// account allowlist.
+// RecordImageGenerationLog uses the authenticated key captured by the caller,
+// so queued billing and image-log work does not need the request's Gin context.
 func (s *OpenAIGatewayService) RecordImageGenerationLog(
 	ctx context.Context,
-	c *gin.Context,
+	apiKey *APIKey,
 	account *Account,
 	requestID string,
 	source string,
@@ -87,32 +85,7 @@ func (s *OpenAIGatewayService) RecordImageGenerationLog(
 	results []ImageLogResult,
 	extraMetadata map[string]any,
 ) {
-	s.recordImageGenerationLog(ctx, c, account, requestID, source, endpoint, model, prompt, imageSize, duration, results, extraMetadata)
-}
-
-func (s *OpenAIGatewayService) recordImageGenerationLog(
-	ctx context.Context,
-	c *gin.Context,
-	account *Account,
-	requestID string,
-	source string,
-	endpoint string,
-	model string,
-	prompt string,
-	imageSize string,
-	duration time.Duration,
-	results []ImageLogResult,
-	extraMetadata map[string]any,
-) {
-	if s == nil || s.imageLogService == nil || c == nil || len(results) == 0 {
-		return
-	}
-	apiKeyValue, exists := c.Get("api_key")
-	if !exists {
-		return
-	}
-	apiKey, ok := apiKeyValue.(*APIKey)
-	if !ok || apiKey == nil || apiKey.User == nil {
+	if s == nil || s.imageLogService == nil || apiKey == nil || apiKey.User == nil || len(results) == 0 {
 		return
 	}
 	results = s.resolveImageLogResults(ctx, account, results)

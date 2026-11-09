@@ -862,7 +862,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesAPIKey(
 		if len(results) == 0 {
 			return
 		}
-		s.RecordImageGenerationLog(upstreamCtx, c, account, resp.Header.Get("x-request-id"), imageLogSourceOpenAIAPIKey, parsed.Endpoint, requestModel, parsed.Prompt, parsed.SizeTier, time.Since(startTime), results, map[string]any{
+		s.RecordImageGenerationLog(upstreamCtx, getAPIKeyFromContext(c), account, resp.Header.Get("x-request-id"), imageLogSourceOpenAIAPIKey, parsed.Endpoint, requestModel, parsed.Prompt, parsed.SizeTier, time.Since(startTime), results, map[string]any{
 			"route": imageLogSourceOpenAIAPIKey,
 		})
 	}

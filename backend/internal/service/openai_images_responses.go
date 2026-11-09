@@ -2215,7 +2215,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 	if err := validateOpenAIImagesModel(upstreamModel); err != nil {
 		return nil, err
 	}
-	direct := usesCodexDirectImages(upstreamModel) && !isOpenAIImagesForceResponses(ctx)
+	direct := usesCodexDirectImages(upstreamModel)
 	beginUpstreamResponseModelObservation(c)
 	SetOpsUpstreamModel(c, upstreamModel)
 	uploadParts := make([]string, 0, len(parsed.Uploads))
@@ -2339,7 +2339,8 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		})
 		return nil, fmt.Errorf("upstream request failed: %s", safeErr)
 	}
-	if direct && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed || isOpenAIImagesToolChoiceCompatibilityError(resp)) {
+	if direct && !requiresCodexDirectImages(upstreamModel) &&
+		(resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed || isOpenAIImagesToolChoiceCompatibilityError(resp)) {
 		// 某些上游账号尚未开放原生 Images 端点，或仍返回旧的 tool_choice
 		// 兼容错误。此时只回退到 Responses，不把普通 4xx/5xx 静默改路由。
 		responsesBody, buildErr := buildOpenAIImagesResponsesRequest(parsed, upstreamModel)
@@ -2380,9 +2381,6 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 		respBody := s.readUpstreamErrorBody(resp)
 		_ = resp.Body.Close()
 		respBody = s.redactAgentIdentitySensitiveBody(upstreamCtx, account, respBody)
-		if direct && !requiresCodexDirectImages(upstreamModel) && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed) {
-			return s.forwardOpenAIImagesOAuth(withOpenAIImagesForceResponses(ctx), c, account, parsed, channelMappedModel)
-		}
 		if !agentIdentityTaskRecoveryWasTried(ctx) && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
 			expectedTaskID := account.GetCredential("task_id")
 			if err := s.recoverAgentIdentityTask(ctx, account, expectedTaskID); err != nil {

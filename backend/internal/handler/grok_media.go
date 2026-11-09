@@ -481,7 +481,7 @@ func (h *OpenAIGatewayHandler) handleGrokMedia(c *gin.Context, endpoint service.
 				logModel := firstNonEmptyString(result.Model, requestModel)
 				h.gatewayService.RecordImageGenerationLog(
 					requestCtx,
-					c,
+					apiKey,
 					account,
 					firstNonEmptyString(result.RequestID, requestID),
 					"grok_media",
